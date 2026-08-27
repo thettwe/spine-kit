@@ -4,6 +4,7 @@ members = [
     "crates/spine-canon",
     "crates/spine-manifest",
     "crates/spine-template",
+    "crates/spine-init",
     "crates/spine-resolve",
     "crates/spine-graph",
     "crates/spine-isolate",
