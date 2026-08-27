@@ -1,0 +1,53 @@
+# The non-negotiables
+
+The twelve rules below were written by `spine init` and are read by four spine
+gates. Editing one changes how this repository is judged, so it lands as the
+protected-floor change it is. Do not reformat them.
+
+# Authority
+
+# solo means exactly one signoff key; team means two or more.
+C-A1: mode = team
+  enforced_by: spine:G13
+# Extends the floor shipped in the release. It never shrinks it.
+C-A2: protected = adr/
+  enforced_by: spine:G14
+# hostile means auto-merge does not exist for this repository.
+C-A3: threat.candidate = hostile
+  enforced_by: spine:G11
+
+# Merge
+
+# merge keeps the branch reachable; squash does not.
+C-M1: merge.strategy = merge
+  enforced_by: spine:G9
+# scoped needs the code graph. Until then, full.
+C-M2: merge.reverify = full
+  enforced_by: spine:G11
+# Re-verifications inside one run, not across runs.
+C-M3: merge.reverify_limit = 3
+  enforced_by: spine:G11
+# A request, not a capability. Rule 5 decides per run.
+C-M4: merge.auto = off
+  enforced_by: spine:G11
+
+# Quick lane
+
+# Paths the quick lane may touch. Anything else needs an intent.
+C-Q1: quick.paths = docs/
+  enforced_by: spine:G2
+# The diff-size wire, in changed lines.
+C-Q2: quick.max_lines = 400
+  enforced_by: spine:G2
+
+# Harness
+
+# Where tests live.
+C-T1: test.roots = <per §6.4>
+  enforced_by: spine:G8
+# What the tests rest on. The list is per runner.
+C-T2: test.support = <per §6.4>
+  enforced_by: spine:G8
+# No test-framework import or runner hook outside the roots above.
+C-T3: test.framework_isolation = on
+  enforced_by: spine:G8

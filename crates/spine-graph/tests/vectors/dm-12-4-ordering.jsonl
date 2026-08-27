@@ -1,0 +1,11 @@
+{"attrs":{},"id":"r/INT-1/AC-10","kind":"ac","src":"git:cc:msg:L8","t":"node"}
+{"attrs":{},"id":"r/INT-1/AC-2","kind":"ac","src":"git:cc:msg:L9","t":"node"}
+{"attrs":{"landing":false},"id":"r/cs:bb","kind":"changeset","src":"git:bb","t":"node"}
+{"attrs":{},"id":"r/code:src/\\xe9.py","kind":"code_unit","src":"git:aa","t":"node"}
+{"attrs":{},"id":"r/code:src/z.py","kind":"code_unit","src":"git:aa","t":"node"}
+{"attrs":{},"from":"r/INT-1","kind":"has_ac","src":"git:cc:msg:L8","t":"edge","to":"r/INT-1/AC-10"}
+{"attrs":{},"from":"r/INT-1","kind":"has_ac","src":"git:cc:msg:L9","t":"edge","to":"r/INT-1/AC-2"}
+{"attrs":{"polarity":"expected"},"from":"r/INT-1","kind":"declares","src":"git:cc:msg:L2","t":"edge","to":"r/code:src/z.py"}
+{"attrs":{"polarity":"forbidden"},"from":"r/INT-1","kind":"declares","src":"git:cc:msg:L3","t":"edge","to":"r/code:src/z.py"}
+{"attrs":{},"from":"r/cs:bb","kind":"modifies","src":"git:aa","t":"edge","to":"r/code:src/\\xe9.py"}
+{"attrs":{},"from":"r/cs:bb","kind":"modifies","src":"git:bb","t":"edge","to":"r/code:src/\\xe9.py"}

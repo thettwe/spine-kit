@@ -1,0 +1,13 @@
+[package]
+name = "spine-isolate"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+spine-manifest = { path = "../spine-manifest" }
+
+[lints]
+workspace = true

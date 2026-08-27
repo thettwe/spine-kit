@@ -1,0 +1,5 @@
+f0ed236cfc75bb491003477b77cbd09b76f80420f546b585e2a16ee85ad989ae  spine-1.4.0-aarch64-apple-darwin.tar.gz
+ce946375b5e89e3e5546d7563ef8a539c5c62828125c851220edf74578dfb167  spine-1.4.0-aarch64-unknown-linux-musl.tar.gz
+40627734cff1df388697c03a037273fb6693cfa5ba594e4cbf85db44ef626bbb  spine-1.4.0-py3-none-any.whl
+2d90a2ef987219f1df0ac40b08fd853156b0500e3f31177a1bd701bc4f618977  spine-1.4.0-x86_64-apple-darwin.tar.gz
+48f5f6e485b72cc4e848a488256435ffcb6025c0f401ae211136d8c34577c1ec  spine-1.4.0-x86_64-unknown-linux-musl.tar.gz
