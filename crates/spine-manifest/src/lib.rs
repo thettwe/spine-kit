@@ -11,12 +11,14 @@
 //! opaque data a binary preserves without understanding (PB §6.7, PB §11).
 
 pub mod artifacts;
+pub mod builder;
 pub mod grammar;
 pub mod keyring;
 pub mod region;
 pub mod schema;
 pub mod status;
 
+pub use builder::{Builder, FileEntry};
 pub use artifacts::{ArtifactList, host_target, target_for};
 pub use keyring::{Keyring, Lint, Mode};
 pub use region::{MarkerStyle, Region, RegionError};
