@@ -156,6 +156,17 @@ where
     F: FnMut(u16, &[u8]) -> Result<(), NetlinkError>,
 {
     let mut offset = 0usize;
+    // Netlink terminates a dump with `NLMSG_DONE` and nothing else, so its
+    // absence is the difference between "the enumeration ended" and "the
+    // enumeration was cut". Tracking it is the whole guard: without it a dump
+    // severed on a message boundary reaches `offset == dump.len()` and returns
+    // a SHORT LIST as a complete, successful enumeration — which is exactly
+    // the fail-open the comment below claimed to prevent and did not.
+    //
+    // A short link list reaches `decide_p4` as `Enumeration::Read`, and P4(a)
+    // passes on an absence: the interface that was cut off is the one that
+    // would have failed the test.
+    let mut saw_done = false;
     while offset + NLMSGHDR_LEN <= dump.len() {
         let len = u32_at(dump, offset).ok_or(NetlinkError::Truncated)? as usize;
         let kind = u16_at(dump, offset + 4).ok_or(NetlinkError::Truncated)?;
@@ -164,7 +175,10 @@ where
         }
         let payload = &dump[offset + NLMSGHDR_LEN..offset + len];
         match kind {
-            NLMSG_DONE => return Ok(()),
+            NLMSG_DONE => {
+                saw_done = true;
+                break;
+            }
             NLMSG_ERROR => {
                 // `struct nlmsgerr { int error; struct nlmsghdr msg; }`.
                 // Zero is an ACK, not a failure.
@@ -179,9 +193,10 @@ where
         offset += align4(len);
     }
     // A tail too short to be a header is a dump that was cut, not a dump that
-    // ended: netlink terminates with `NLMSG_DONE` and nothing else. Returning
-    // the messages read so far would be the short list P4(a) must never see.
-    if offset != dump.len() {
+    // ended. So is a dump that ran out cleanly without ever carrying
+    // `NLMSG_DONE`. Returning the messages read so far, in either case, would
+    // be the short list P4(a) must never see.
+    if !saw_done {
         return Err(NetlinkError::Truncated);
     }
     Ok(())
@@ -587,5 +602,41 @@ mod tests {
     fn a_chunk_carrying_done_ends_the_dump() {
         assert!(chunk_ends_the_dump(&build::the_measured_fresh_namespace()));
         assert!(!chunk_ends_the_dump(&build::link_message(1, "lo", 0x9)));
+    }
+
+    /// A dump severed on a message boundary must not read as a complete
+    /// enumeration. It reached `offset == dump.len()` and returned `Ok` with a
+    /// short list until 2026-08-28 — and a short link list is the fail-open
+    /// P4(a) cannot detect, because P4(a) passes on an absence: the interface
+    /// that was cut off is precisely the one that would have failed the test.
+    #[test]
+    fn a_dump_without_nlmsg_done_is_truncated_not_complete() {
+        let full = build::the_runner_disposition();
+        let links = parse_links(&full).expect("the whole dump parses");
+        assert_eq!(links.len(), 10);
+
+        // Strip exactly the DONE trailer: every remaining message is intact and
+        // the buffer ends on a message boundary.
+        let done_len = build::done().len();
+        let severed = &full[..full.len() - done_len];
+        assert!(
+            matches!(parse_links(severed), Err(NetlinkError::Truncated)),
+            "a dump with no DONE is a dump that was cut"
+        );
+
+        // And cutting further, mid-message, is still truncated — the case that
+        // was already handled.
+        assert!(matches!(
+            parse_links(&full[..full.len() - done_len - 4]),
+            Err(NetlinkError::Truncated)
+        ));
+    }
+
+    /// The empty dump is not a pass either: a live namespace always holds at
+    /// least loopback, so zero messages and no DONE is a dump that did not
+    /// happen.
+    #[test]
+    fn an_empty_buffer_is_truncated() {
+        assert!(matches!(parse_links(&[]), Err(NetlinkError::Truncated)));
     }
 }

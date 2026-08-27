@@ -397,17 +397,53 @@ pub fn run_restore(script: &RestoreScript, cwd: &Path, deadline: Duration) -> Re
         Err(e) => return RestoreOutcome::SpawnFailed(e.to_string()),
     };
 
+    // The script is fed from a **separate thread**, and the deadline clock
+    // starts before it.
+    //
+    // A blocking `write_all` on this thread bypassed the deadline entirely: a
+    // `.spine/restore.sh` larger than the pipe buffer (64 KiB) whose head
+    // blocks — `sleep 3600`, a `curl` at a dead socket — left `write_all`
+    // waiting for a reader that never drains, so `started` was never taken and
+    // `try_wait` was never called. The collector wedged forever, on a path
+    // whose whole purpose is to be bounded: this is the one phase that keeps
+    // the job's network, and `params.timeout` is what bounds it.
+    //
+    // The thread is detached deliberately. When the deadline expires the
+    // process group is killed, the pipe breaks, `write_all` fails, and the
+    // thread ends; joining it would reintroduce the wait this removes.
     if let Some(mut stdin) = child.stdin.take() {
-        // A script that closes stdin early makes this a broken pipe, which is
-        // the script's business and not a failure of the phase.
-        let _ = stdin.write_all(bytes);
+        let script = bytes.clone();
+        std::thread::spawn(move || {
+            // A script that closes stdin early makes this a broken pipe, which
+            // is the script's business and not a failure of the phase.
+            let _ = stdin.write_all(&script);
+            // Dropping `stdin` closes the pipe, which is how the script sees
+            // EOF and can exit at all.
+        });
     }
 
     let pgid = child.id();
     let started = std::time::Instant::now();
     loop {
         match child.try_wait() {
-            Ok(Some(_status)) => return RestoreOutcome::Ran,
+            Ok(Some(_status)) => {
+                // The phase is over, so its process group ends with it.
+                //
+                // RF §7.1 names the kill on expiry and is silent on normal
+                // exit, and silence here is not the safe reading: this is the
+                // ONE phase that keeps the job's network, and a script that
+                // backgrounds a downloader and exits leaves that downloader
+                // running — an egress window outliving the phase whose bound
+                // is the only thing bounding it. The runner invocations that
+                // follow are loopback-only, so the survivor would be the only
+                // process in the job with a route off the host.
+                //
+                // Killing a group whose leader has already exited is harmless:
+                // there is either nothing left to signal or exactly the
+                // survivors this exists to end.
+                let _ = crate::sys::kill_process_group(pgid, crate::sys::SIGKILL);
+                return RestoreOutcome::Ran;
+            }
             Ok(None) => {}
             Err(e) => return RestoreOutcome::SpawnFailed(e.to_string()),
         }

@@ -252,13 +252,36 @@ impl HostFacts for RealHost {
         // collector wrote, so what it needs is the *other* bits: `o+x` on every
         // directory on the path, and `o+r` (plus `o+x` for the binary) on the
         // leaf.
-        self.traversal.iter().all(|p| other_can_reach(p))
+        //
+        // **An empty traversal set is not a pass.** `all` over nothing is
+        // `true`, so `RealHost::new(dir, vec![])` made prerequisite 4
+        // unfalsifiable — a check that cannot fail, which is the named hazard
+        // of this whole section. RF §7.1's prerequisite 4 names what must be
+        // traversable: "the checkouts of `B` and `T`, and the binary the probe
+        // re-execs". A collector that was handed none of them has not satisfied
+        // the prerequisite; it has failed to ask.
+        traversal_is_reachable(&self.traversal, other_can_reach)
     }
 
     fn network_namespace_available(&self) -> bool {
         Path::new("/proc/self/ns/net").exists()
             && sysctl_positive("/proc/sys/user/max_net_namespaces")
     }
+}
+
+/// Prerequisite 4's predicate, extracted so it is testable on every platform
+/// and so its one subtlety is stated in one place.
+///
+/// The emptiness clause is the subtlety. RF §7.1 names what must be
+/// traversable — "the checkouts of `B` and `T`, and the binary the probe
+/// re-execs" — so a collector handed none of them has not satisfied the
+/// prerequisite, it has failed to ask. `all` over nothing being `true` made
+/// this the one prerequisite that could not fail.
+pub fn traversal_is_reachable<F>(paths: &[PathBuf], reachable: F) -> bool
+where
+    F: Fn(&Path) -> bool,
+{
+    !paths.is_empty() && paths.iter().all(|p| reachable(p))
 }
 
 /// RF §7.1: *"M1 needs kernel namespaces and therefore exists on Linux only —
@@ -514,5 +537,19 @@ mod tests {
             assert!(!p.summary().is_empty());
             assert!((1..=5).contains(&p.number()));
         }
+    }
+
+    /// A check that cannot fail is the named hazard of this section, and
+    /// prerequisite 4 was one: `all` over an empty traversal set is `true`, so
+    /// a collector handed nothing to check satisfied it.
+    #[test]
+    fn an_empty_traversal_set_does_not_satisfy_prerequisite_four() {
+        assert!(
+            !traversal_is_reachable(&[], |_| true),
+            "a collector handed nothing to check has not satisfied prerequisite 4"
+        );
+        let paths = [PathBuf::from("/a"), PathBuf::from("/b")];
+        assert!(traversal_is_reachable(&paths, |_| true));
+        assert!(!traversal_is_reachable(&paths, |p| p != Path::new("/b")));
     }
 }

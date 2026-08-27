@@ -387,7 +387,15 @@ pub fn decide_p1(canary: &Canary, attempts: &P1Attempts) -> TestOutcome {
 /// process in the boundary destroy the result directory*. It runs last so that
 /// a success does not disturb limbs (a) to (c).
 pub fn attempt_containment(canary: &Path, result_file: &Path, result_dir: &Path) -> P1Attempts {
-    debug_assert!(canary.is_absolute() && result_file.is_absolute() && result_dir.is_absolute());
+    // **Not** `debug_assert!`. P1 is specified "By absolute path", and a
+    // release binary with the assertion compiled out would silently measure the
+    // probe's cwd instead of the result directory — a limb that answers a
+    // different question and cannot fail. The collector this ships in is a
+    // release build.
+    assert!(
+        canary.is_absolute() && result_file.is_absolute() && result_dir.is_absolute(),
+        "P1's four attempts are made by absolute path (RF §7.1)"
+    );
     let read_canary = Attempt::from_result(std::fs::read(canary));
     let write_canary = Attempt::from_result(append_a_byte(canary));
     // `create(true)` and not `create_new(true)`: the attack the limb models is
@@ -395,6 +403,24 @@ pub fn attempt_containment(canary: &Path, result_file: &Path, result_dir: &Path)
     // and that process would happily overwrite.
     let create_result_file = Attempt::from_result(std::fs::write(result_file, b"forged\n"));
     let remove_result_dir = Attempt::from_result(std::fs::remove_dir_all(result_dir));
+
+    // Probe step 4: "No probe artifact survives step 6, whatever the outcome."
+    //
+    // Limb (c) SUCCEEDING is the case that matters, and it was the case with no
+    // cleanup: a boundary that failed P1 left `forged\n` sitting at
+    // `.spine/cache/results/<T>.jsonl` — the exact path RF §8.1 makes the
+    // untrusted job's one artifact and the trusted stage ingests. The run
+    // continues under `profile=none` after a failed probe, so the collector
+    // would then have written its real file over a forgery, or worse, not
+    // written one and left the forgery to be ingested.
+    //
+    // Removal is unconditional and its own result is discarded: this is
+    // cleanup, not a fifth measurement, and a failure to clean up must not
+    // change what P1 decided.
+    if create_result_file == Attempt::Succeeded {
+        let _ = std::fs::remove_file(result_file);
+    }
+
     P1Attempts {
         read_canary,
         write_canary,
