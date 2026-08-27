@@ -11,6 +11,7 @@
 
 pub mod constitution;
 pub mod harness;
+pub mod regions;
 pub mod release;
 pub mod scaffold;
 pub mod substitute;
