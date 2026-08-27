@@ -1,0 +1,17 @@
+tree=3f7b1c9d2a5e48f0b6c1d8e2a9f403b7c5d61e28 base=7b0d4a1f2c3e5d6a8b9c0d1e2f3a4b5c6d7e8f90 tool=1.4.0+sha256:6f49644fdd3009155fe32ab46b9da846b6645f52a15eb3aa44234c02b1c744db keys_visible=false profile=container ids=7
+{"id":"tests/billing/test_discounts.py::test_percentage_discount","out":"passed","path":"tests/billing/test_discounts.py","runner":"pytest","t":"base"}
+{"id":"tests/billing/test_invoice.py::test_invoice_renders","out":"passed","path":"tests/billing/test_invoice.py","runner":"pytest","t":"base"}
+{"id":"tests/billing/test_invoice.py::test_line_items_sum[one]","out":"passed","path":"tests/billing/test_invoice.py","runner":"pytest","t":"base"}
+{"id":"tests/billing/test_invoice.py::test_line_items_sum[two]","out":"passed","path":"tests/billing/test_invoice.py","runner":"pytest","t":"base"}
+{"id":"tests/billing/invoice.test.ts > invoice totals > renders","out":"passed","path":"tests/billing/invoice.test.ts","runner":"vitest","t":"base"}
+{"id":"tests/core/util.test.ts > rounding > half-even","out":"passed","path":"tests/core/util.test.ts","runner":"vitest","t":"base"}
+{"id":"tests/core/util.test.ts > rounding > half-up","out":"passed","path":"tests/core/util.test.ts","runner":"vitest","t":"base"}
+{"fn":"tests/billing/test_discounts.py::test_percentage_discount","id":"tests/billing/test_discounts.py::test_percentage_discount","out":"passed","path":"tests/billing/test_discounts.py","runner":"pytest","t":"result"}
+{"fn":"tests/billing/test_invoice.py::test_AC1_totals_include_tax","id":"tests/billing/test_invoice.py::test_AC1_totals_include_tax[reduced-rate]","out":"passed","path":"tests/billing/test_invoice.py","runner":"pytest","t":"result"}
+{"fn":"tests/billing/test_invoice.py::test_AC1_totals_include_tax","id":"tests/billing/test_invoice.py::test_AC1_totals_include_tax[standard-rate]","out":"passed","path":"tests/billing/test_invoice.py","runner":"pytest","t":"result"}
+{"fn":"tests/billing/test_invoice.py::test_AC1_totals_include_tax","id":"tests/billing/test_invoice.py::test_AC1_totals_include_tax[zero-rate]","out":"passed","path":"tests/billing/test_invoice.py","runner":"pytest","t":"result"}
+{"fn":"tests/billing/test_invoice.py::test_invoice_renders","id":"tests/billing/test_invoice.py::test_invoice_renders","out":"passed","path":"tests/billing/test_invoice.py","runner":"pytest","t":"result"}
+{"fn":"tests/billing/test_invoice.py::test_line_items_sum","id":"tests/billing/test_invoice.py::test_line_items_sum[one]","out":"passed","path":"tests/billing/test_invoice.py","runner":"pytest","t":"result"}
+{"fn":"tests/billing/test_invoice.py::test_line_items_sum","id":"tests/billing/test_invoice.py::test_line_items_sum[two]","out":"passed","path":"tests/billing/test_invoice.py","runner":"pytest","t":"result"}
+{"fn":"tests/billing/invoice.test.ts > invoice totals > AC2 zero-rated lines","id":"tests/billing/invoice.test.ts > invoice totals > AC2 zero-rated lines","out":"passed","path":"tests/billing/invoice.test.ts","runner":"vitest","t":"result"}
+{"status":"runner-timeout","t":"end"}

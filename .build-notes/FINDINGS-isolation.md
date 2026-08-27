@@ -108,8 +108,8 @@ inside `unshare --net --user --map-root-user`:
 device count from /proc/net/dev: 10
 devices: lo tunl0 gre0 gretap0 erspan0 ip_vti0 ip6_vti0 sit0 ip6tnl0 ip6gre0
 
-  lo       flags=0x9     (IFF_UP | IFF_LOOPBACK)
-  tunl0    flags=0x80    (IFF_NOARP)          — down
+  lo       flags=0x8     (IFF_LOOPBACK)        — down
+  tunl0    flags=0x80    (IFF_NOARP)           — down
   gre0     flags=0x80                          — down
   gretap0  flags=0x1002  (IFF_BROADCAST|IFF_MULTICAST) — down
   erspan0  flags=0x1002                        — down
@@ -123,9 +123,30 @@ IPv4 addresses in this netns: (none)
 IPv6 addresses in this netns: (none)
 ```
 
-Nine devices beyond loopback, every one **down**, every one carrying **no
-address**. The namespace is as isolated as the spec intends — the boundary is
-sound — but the literal test P4(a) states fails on it, and therefore forever.
+**Correction, and it is the same trap this document warns about.** The flags
+above were re-measured on 2026-08-27 from a `sysfs` **remounted inside the
+namespace**. The first pass read them from the inherited `sysfs` and recorded
+`lo flags=0x9` — which is the *host's* loopback, up, not the namespace's. The
+device list and the address sets were always sound, because `/proc/net/dev` and
+`/proc/net/if_inet6` are resolved per-namespace from the reading task; only the
+`sysfs` column was wrong. Found by an adversarial verification of the
+implementation, which recomputed the value rather than trusting it. The lesson
+is the one in the third section below, and it applies to whoever measures next:
+**`sysfs` answers for the namespace it was mounted in, not the one you are in.**
+
+Ten devices, every one **down** — loopback included — and every one carrying
+**no address**. Two things follow, not one:
+
+- The namespace is as isolated as the spec intends, and the literal test P4(a)
+  states fails on it, and therefore forever. That is the defect below.
+- **A fresh namespace has no usable interface at all.** Loopback is created
+  DOWN. RF §7.1's prerequisite 5 is "a network namespace … **with a loopback
+  device it can bring up**", and the mechanism paragraph says the namespace is
+  "empty but for a `lo` device the collector **brings up**" — so bringing it up
+  is a step the collector performs and can fail. A P4(a) written only as *no
+  interface other than loopback is up* would pass a namespace where loopback is
+  down too, and RF §7.1 promises a runner reaches `127.0.0.1` and `::1`. So
+  P4(a) requires loopback to be **up** as well.
 
 **The sound half is already in the spec.** *"carrying no address other than
 `127.0.0.1/8` and `::1/128`"* is exactly right and passes here: the address set
@@ -133,9 +154,9 @@ of that namespace is precisely loopback's. It is the *device-count* clause that
 is wrong, and it is wrong because it describes an intent ("nothing but loopback")
 in terms of an artefact the kernel does not honour.
 
-**Recommended amendment.** P4(a)'s pass condition becomes: **no interface other
-than loopback is `IFF_UP`, and no address of any family exists in the namespace
-other than `127.0.0.1/8` and `::1/128`.** That is strictly stronger than the
+**Recommended amendment.** P4(a)'s pass condition becomes: **loopback is
+`IFF_UP`, no interface other than loopback is `IFF_UP`, and no address of any
+family exists in the namespace other than `127.0.0.1/8` and `::1/128`.** That is strictly stronger than the
 device count against the threat P4 exists to detect — a veth pair moved in, a
 bridge, an inherited interface — because any of those must be up and addressed to
 carry traffic, while a down, address-less `gre0` cannot.

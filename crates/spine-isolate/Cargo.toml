@@ -7,7 +7,7 @@ license.workspace = true
 publish = false
 
 [dependencies]
-spine-canon = { path = "../spine-canon" }
+spine-manifest = { path = "../spine-manifest" }
 
 [lints]
 workspace = true
