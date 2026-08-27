@@ -1,0 +1,20 @@
+[package]
+name = "spine-cli"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "spine"
+path = "src/main.rs"
+
+[dependencies]
+spine-canon = { path = "../spine-canon" }
+spine-manifest = { path = "../spine-manifest" }
+spine-collect = { path = "../spine-collect" }
+spine-graph = { path = "../spine-graph" }
+
+[lints]
+workspace = true

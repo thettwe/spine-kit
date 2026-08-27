@@ -1,0 +1,33 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/spine-canon",
+    "crates/spine-manifest",
+    "crates/spine-resolve",
+    "crates/spine-graph",
+    "crates/spine-isolate",
+    "crates/spine-collect",
+    "crates/spine-cli",
+]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.98"
+license = "MIT"
+repository = "https://github.com/spine-kit/spine-kit"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+# Determinism is the whole product: these are hard errors, not style.
+float_arithmetic = "deny"
+mutable_key_type = "deny"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

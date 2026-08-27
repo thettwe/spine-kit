@@ -1,0 +1,13 @@
+[package]
+name = "spine-graph"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+spine-canon = { path = "../spine-canon" }
+
+[lints]
+workspace = true
