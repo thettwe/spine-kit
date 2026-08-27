@@ -12,17 +12,26 @@
 //! So the render is the preamble §3.1 states, then §6.2's block. Rendering
 //! §6.2's block alone yields a file whose line 1 is `# The non-negotiables` and
 //! whose line 2 is blank — `missing-header` on the seed of every repository.
-//! `.build-notes/FINDINGS-constitution-seed.md` records that, and the two
-//! values §6.2 leaves without a source.
+//!
+//! §6.2 has been amended to state the three-part render (CN §15 D18). The two
+//! header **values** it leaves without a source are the owner's and are carried
+//! here as the documented recommendations of **§16 OPEN-10** (`Version:`) and
+//! **§16 OPEN-11** (`Owner:`), not as settled facts.
 
 use crate::harness;
 
 /// CN §9.1 field 1: `v` + a decimal integer, no leading zeros.
 ///
-/// The seed is `v1` and the corpus never says so: no document in the set
-/// contains the bytes `Version: v1`. It is the only value consistent with §9.3
-/// ("the version must change when the file changes") on a file that has not
-/// changed yet, and with §9.2 ("it is not a clock").
+/// **This is CN §16 OPEN-10 — an owner's decision, not a settled value.** No
+/// document in the corpus contains the bytes `Version: v1`, and §12.1's worked
+/// file is at `v3` with four numbered rules a team has added, so it is a parse
+/// vector and fixes nothing about the seed.
+///
+/// `1` is the recommendation §16 OPEN-10 records: the only value consistent
+/// with §9.3 ("the version must change when the file changes") on a file that
+/// has not changed yet, and with §9.2's insistence that the number is not a
+/// clock. It is carried here so `init` can run; if the owner rules otherwise,
+/// this constant is the only thing that moves.
 pub const SEED_VERSION: u32 = 1;
 
 /// CN §6.2's twelve-rule block, byte for byte, with `C-T1` and `C-T2` left as
@@ -41,10 +50,16 @@ pub struct Seed<'a> {
     /// 2026-08-27), substituted into §3.1's title line.
     pub repo: &'a str,
     /// The principal of the signing identity, taken **verbatim with no `@`
-    /// prefix added**, which is TM §6.1 substitution 2's rule for the intent
-    /// scaffold's `Owner:`. The corpus states no rule for the constitution's,
-    /// and this is its only precedent; CN §12.1's `@alice` is a human's own
-    /// later edit, and §9.1 makes the field "read by no gate".
+    /// prefix added**.
+    ///
+    /// **CN §16 OPEN-11** — the corpus states no rule for this field, and this
+    /// follows TM §6.1 substitution 2's rule for the same field on the adjacent
+    /// artifact, whose reasoning transfers unchanged: every identity in the
+    /// design is a keyring principal, and prefixing would produce
+    /// `@alice@example.com`. Lower stakes than OPEN-10 — §9.1 makes the field
+    /// "read by no gate" and the constitution is `user-owned`, so a human
+    /// fixing it once is the end of it. CN §12.1's `Owner: @alice` is such an
+    /// edit, not a counter-example.
     pub owner: &'a str,
     /// `params.langs`, in any order — CN §6.4's render order is fixed and
     /// independent of it.
