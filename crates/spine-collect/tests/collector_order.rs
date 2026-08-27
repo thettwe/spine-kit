@@ -320,8 +320,8 @@ fn a_failed_b_outcome_run_leaves_the_floor_whole_and_the_status_unmoved() {
     assert_eq!(file.base[2].out, BaseOutcome::Absent);
     // RF §4.4: `absent` "is not `unknown`" — the carve-out is denied, never
     // granted, by an outcome run that stopped early.
-    assert!(!file.base[1].out.exempts_from_findings());
-    assert!(file.base[0].out.exempts_from_findings());
+    assert!(!file.base[1].out.was_xfail_or_skipped_on_b());
+    assert!(file.base[0].out.was_xfail_or_skipped_on_b());
 }
 
 /// RF §7.2: "When a runner reports an id more than once — a rerun plugin, a
@@ -580,5 +580,96 @@ fn reversing_the_invocation_order_changes_no_byte_of_the_file() {
     let text = String::from_utf8(one).expect("UTF-8");
     assert!(
         text.find("\"runner\":\"pytest\"").unwrap() < text.find("\"runner\":\"vitest\"").unwrap()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The probe that was missing, and the defect it would have caught.
+//
+// Before 2026-08-28 no test here composed the write side with the read side:
+// every test inspected the in-memory `ResultFile` or counted lines of
+// `to_bytes()`, and none re-read the bytes `collect` produced. That gap hid a
+// writer able to emit a file its own parser rejects as `result-malformed` —
+// two adapters sharing a `runner` token produced duplicate `(runner, id)`
+// pairs, which the constructor sorted and never checked for ascension.
+//
+// RF §11 item 5 makes pair uniqueness an obligation on the writer as well as
+// the reader, so a writer that cannot read back what it wrote is
+// non-conformant however well-formed each line looks.
+// ---------------------------------------------------------------------------
+
+/// One scripted runner, collected, and the bytes read back under this crate's
+/// own parser.
+#[test]
+fn what_collect_writes_this_crate_can_read() {
+    let journal: Journal = Rc::new(RefCell::new(Vec::new()));
+    let mut host = FakeHost {
+        journal: Rc::clone(&journal),
+        profile: Profile::Container,
+    };
+    let mut adapters: Vec<Box<dyn RunnerAdapter>> = vec![Box::new(FakeRunner {
+        journal: Rc::clone(&journal),
+        token: token("pytest"),
+        enumeration: BaseEnumeration::Collected(vec![
+            base_id("a.py::x", "a.py"),
+            base_id("a.py::y", "a.py"),
+        ]),
+        outcomes: BaseOutcomeRun {
+            reported: vec![
+                ("a.py::x".into(), Outcome::Passed),
+                ("a.py::y".into(), Outcome::Passed),
+            ],
+        },
+        run: complete(vec![
+            item("a.py::x", "a.py::x", "a.py", Outcome::Passed),
+            item("a.py::y", "a.py::y", "a.py", Outcome::Passed),
+        ]),
+    })];
+
+    let file = collect(&run(), &policy(), Mode::Ci, &mut host, &mut adapters);
+    let bytes = file.to_bytes();
+
+    let read = spine_collect::ResultFile::parse(&bytes, TREE, ObjectFormat::Sha1)
+        .expect("collect must not write a file its own parser refuses");
+    assert_eq!(
+        read.to_bytes(),
+        bytes,
+        "and re-serializing what was read is the identity"
+    );
+    assert!(read.floor_holds());
+}
+
+/// The specific shape the round trip exposes: two adapters sharing a runner
+/// token, so `(runner, id)` repeats. The writer refuses rather than emitting it.
+#[test]
+fn two_runners_sharing_a_token_are_refused_by_the_writer() {
+    let journal: Journal = Rc::new(RefCell::new(Vec::new()));
+    let mut host = FakeHost {
+        journal: Rc::clone(&journal),
+        profile: Profile::Container,
+    };
+    let duplicate = || {
+        Box::new(FakeRunner {
+            journal: Rc::clone(&journal),
+            token: token("pytest"),
+            enumeration: BaseEnumeration::Collected(vec![base_id("a.py::x", "a.py")]),
+            outcomes: BaseOutcomeRun {
+                reported: vec![("a.py::x".into(), Outcome::Passed)],
+            },
+            run: complete(vec![item("a.py::x", "a.py::x", "a.py", Outcome::Passed)]),
+        }) as Box<dyn RunnerAdapter>
+    };
+    let mut adapters: Vec<Box<dyn RunnerAdapter>> = vec![duplicate(), duplicate()];
+
+    // `collect` still panics on this rather than writing — the pair is a bug in
+    // the invocation set, not a fact about the repository, and RF §6.2 makes
+    // the set one adapter per language. What matters is that it can no longer
+    // reach a byte.
+    let wrote = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        collect(&run(), &policy(), Mode::Ci, &mut host, &mut adapters).to_bytes()
+    }));
+    assert!(
+        wrote.is_err(),
+        "a duplicate (runner, id) pair must not reach a byte"
     );
 }

@@ -180,13 +180,61 @@ pub fn serialize(header: &Header, graph: &Graph) -> Result<Dump> {
 
         node.attrs
             .check_profile(|n| node.kind.attr_type(n), &node.id)?;
-        check_node_attr_domains(node.kind, &node.attrs, &node.id)?;
+        check_node_attr_domains(node.kind, &node.attrs, &node.id, header.object_format)?;
         node.src.check(header.object_format)?;
 
         out.extend_from_slice(&node_line(node));
     }
 
+    // Every node id the dump emitted, so an edge endpoint can be checked
+    // against the kind it actually names where the node is present.
+    let node_kinds: Vec<(&str, NodeKind)> =
+        nodes.iter().map(|n| (n.id.as_str(), n.kind)).collect();
+
     for edge in graph.ordered_edges() {
+        // **Endpoints are validated.** They were not, until 2026-08-28: an edge
+        // could carry a `from` outside the repo prefix, outside ASCII, or of a
+        // kind DM §13.4 forbids, and serialize cleanly. DM §5.3 says a
+        // malformed endpoint "surfaces as `id-out-of-grammar`", and DM §17
+        // items 4 and 10 require every string to be ASCII-after-`esc` and every
+        // id to match its kind's row.
+        //
+        // The kind is checked only where the node is present in this dump. A
+        // dangling endpoint is not a serialization fault — it is G5's finding,
+        // and refusing it here would make the dump unable to represent the
+        // thing a gate exists to report.
+        if let Some((from_kind, to_kind)) = edge.kind.endpoints() {
+            for (role, id, expected) in [
+                ("from", &edge.from, from_kind),
+                ("to", &edge.to, to_kind),
+            ] {
+                let observed = node_kinds
+                    .iter()
+                    .find(|(node_id, _)| *node_id == id.as_str())
+                    .map(|(_, kind)| *kind);
+                match observed {
+                    // Present: DM §13.4's table decides, and it is the table
+                    // §13.4 calls load-bearing — "Getting one backwards is a
+                    // whole-dump diff, so all fifteen are written down."
+                    Some(kind) if kind != expected => {
+                        return Err(Refusal::new(
+                            Status::IdOutOfGrammar,
+                            format!(
+                                "{} edge {role} {id:?} is a {} node, not a {}",
+                                edge.kind.token(),
+                                kind.token(),
+                                expected.token()
+                            ),
+                        ));
+                    }
+                    Some(_) => {}
+                    // Absent: the id must still be well formed for the kind the
+                    // table says it should be.
+                    None => check_node_id(&header.repo, expected, id, header.object_format)?,
+                }
+            }
+        }
+
         // DM §5.3 and §17 item 9: `exercises` is in the closed `kind` domain
         // and is emitted by nothing. Its source is a CI coverage report, which
         // DM §8.1's generating rule excludes for the same reason it excludes a
@@ -284,15 +332,66 @@ pub fn edge_line(edge: &crate::store::Edge) -> Vec<u8> {
     out
 }
 
+/// Every attr DM §7.2 types as a git object id.
+///
+/// Held as one list because the check is one check: DM's four attr types have
+/// no oid among them, so the type layer cannot carry this and a per-kind match
+/// would be fifteen places to forget it.
+const OID_VALUED_ATTRS: [&str; 9] = [
+    "base",
+    "blob",
+    "freezes_oid",
+    "head",
+    "landing",
+    "tree",
+    "valid_from",
+    "valid_to",
+    "voided_by",
+];
+
 /// The node-attr domains DM §7.2 and §7.3 close, and the exclusions DM §17
 /// items 15 and 18 make mechanically checkable.
-fn check_node_attr_domains(kind: NodeKind, attrs: &Attrs, where_: &str) -> Result<()> {
+fn check_node_attr_domains(
+    kind: NodeKind,
+    attrs: &Attrs,
+    where_: &str,
+    format: ObjectFormat,
+) -> Result<()> {
     let bad = |what: String| {
         Err(Refusal::new(
             Status::AttrsOutOfProfile,
             format!("{where_}: {what}"),
         ))
     };
+
+    // Every attr DM §7.2 types as a git object id must BE one.
+    //
+    // `attr_type` says `Str` for all of these, because DM's profile has four
+    // types and "an oid" is not one of them — so without this the schema
+    // accepts `blob: "abc123f"` and `landing: "ABC"` and serializes them into
+    // the artifact G10 diffs. An abbreviated or uppercase oid compares unequal
+    // to every id git produces, so it is a value that can never match anything
+    // and can never be noticed either.
+    for name in OID_VALUED_ATTRS {
+        if let Some(AttrValue::Str(value)) = attrs.get(name)
+            && !is_oid(value, format)
+        {
+            return bad(format!(
+                "{name} {value:?} is not a {} object id",
+                format.as_str()
+            ));
+        }
+    }
+
+    // DM §7.2's presence column. An attr marked "always" and absent is a node
+    // the dump can hold and no reader can use — and for `changeset.landing` in
+    // particular its absence silently escaped the member-changeset rule below,
+    // which is guarded on the value being present and `false`.
+    for name in kind.always_present_attrs() {
+        if attrs.get(name).is_none() {
+            return bad(format!("{name} is always present on a {} node", kind.token()));
+        }
+    }
 
     match kind {
         NodeKind::Intent => {
@@ -474,6 +573,140 @@ mod tests {
     use super::*;
     use crate::schema::{Src, id};
     use crate::store::{Edge, Node};
+
+    /// DM §5.3: a malformed endpoint "surfaces as `id-out-of-grammar`". Edge
+    /// endpoints were validated by nothing until 2026-08-28.
+    #[test]
+    fn an_edge_endpoint_outside_the_repo_prefix_is_refused() {
+        let src = Src::Trailer {
+            sha: "de841d39b7a84111dfbcc11ddc7a75aa9886b218".into(),
+            name: "Spine-Seal".into(),
+        };
+        let mut g = Graph::new();
+        g.add_node(Node::new(
+            NodeKind::Intent,
+            id::intent("myrepo", "INT-042"),
+            complete_intent_attrs(),
+            src.clone(),
+        ));
+        g.add_edge(Edge::new(
+            EdgeKind::HasAc,
+            id::intent("myrepo", "INT-042"),
+            // Another repository's ac id: well formed, and not this dump's.
+            String::from("otherrepo/INT-042/AC-1"),
+            Attrs::new(),
+            src,
+        ));
+        let refusal = serialize(&empty_header(), &g).unwrap_err();
+        assert_eq!(refusal.status, Status::IdOutOfGrammar);
+    }
+
+    /// DM §13.4's table is "load-bearing … Getting one backwards is a
+    /// whole-dump diff, so all fifteen are written down" — and until
+    /// 2026-08-28 nothing consulted it.
+    #[test]
+    fn an_edge_whose_endpoint_is_the_wrong_node_kind_is_refused() {
+        let src = Src::Trailer {
+            sha: "de841d39b7a84111dfbcc11ddc7a75aa9886b218".into(),
+            name: "Spine-Seal".into(),
+        };
+        let mut g = Graph::new();
+        g.add_node(Node::new(
+            NodeKind::Intent,
+            id::intent("myrepo", "INT-042"),
+            complete_intent_attrs(),
+            src.clone(),
+        ));
+        g.add_node(Node::new(
+            NodeKind::Ac,
+            id::ac("myrepo", "INT-042", 1),
+            Attrs::new(),
+            src.clone(),
+        ));
+        // `has_ac` runs intent -> ac. Backwards, both endpoints exist and both
+        // ids are well formed, so only the kind table can catch it.
+        g.add_edge(Edge::new(
+            EdgeKind::HasAc,
+            id::ac("myrepo", "INT-042", 1),
+            id::intent("myrepo", "INT-042"),
+            Attrs::new(),
+            src,
+        ));
+        let refusal = serialize(&empty_header(), &g).unwrap_err();
+        assert_eq!(refusal.status, Status::IdOutOfGrammar);
+        assert!(
+            refusal.where_.contains("has_ac"),
+            "the refusal names the edge kind: {}",
+            refusal.where_
+        );
+    }
+
+    /// An abbreviated or uppercase oid compares unequal to every id git
+    /// produces, so it is a value that can never match and can never be
+    /// noticed. DM's four attr types have no oid among them, so the type layer
+    /// cannot carry this.
+    #[test]
+    fn an_oid_valued_attr_that_is_not_an_oid_is_refused() {
+        let src = Src::Trailer {
+            sha: "de841d39b7a84111dfbcc11ddc7a75aa9886b218".into(),
+            name: "Spine-Seal".into(),
+        };
+        for (name, bad) in [
+            ("blob", "abc123f"),
+            ("landing", "DE841D39B7A84111DFBCC11DDC7A75AA9886B218"),
+            ("base", ""),
+        ] {
+            let mut attrs = complete_intent_attrs();
+            attrs = attrs.str(name, bad);
+            let mut g = Graph::new();
+            g.add_node(Node::new(
+                NodeKind::Intent,
+                id::intent("myrepo", "INT-042"),
+                attrs,
+                src.clone(),
+            ));
+            let refusal = match serialize(&empty_header(), &g) {
+                Err(refusal) => refusal,
+                Ok(_) => panic!("{name}={bad:?} must be refused"),
+            };
+            assert_eq!(refusal.status, Status::AttrsOutOfProfile, "{name}");
+        }
+    }
+
+    /// DM §7.2's presence column. `changeset.landing` is the one that mattered:
+    /// the member-changeset rule is written over the value being present and
+    /// `false`, so an omission escaped it entirely.
+    #[test]
+    fn an_always_present_attr_that_is_absent_is_refused() {
+        let src = Src::Trailer {
+            sha: "de841d39b7a84111dfbcc11ddc7a75aa9886b218".into(),
+            name: "Spine-Seal".into(),
+        };
+        let mut g = Graph::new();
+        g.add_node(Node::new(
+            NodeKind::Changeset,
+            id::changeset("myrepo", "de841d39b7a84111dfbcc11ddc7a75aa9886b218"),
+            // No `landing`, but every seal field a landing carries.
+            Attrs::new().str("lane", "quick").str("event", "land"),
+            src,
+        ));
+        let refusal = serialize(&empty_header(), &g).unwrap_err();
+        assert_eq!(refusal.status, Status::AttrsOutOfProfile);
+        assert!(refusal.where_.contains("landing"), "{}", refusal.where_);
+    }
+
+    /// An `intent` node carrying every attr DM §7.2 marks `always`.
+    fn complete_intent_attrs() -> Attrs {
+        Attrs::new()
+            .str("status", "merged")
+            .bytes("title", b"Invoice totals include tax")
+            .str("template", "intent@2")
+            .str("blob", "1f0c0a1e2b3c4d5e6f708192a3b4c5d6e7f80912")
+            .int("reopen_count", 0)
+            .int("late_reopen_count", 0)
+            .str("landing", "de841d39b7a84111dfbcc11ddc7a75aa9886b218")
+            .str("base", "1cbc18507888cb238c56ce00ba678c16564e0274")
+    }
 
     fn empty_header() -> Header {
         Header {
@@ -691,12 +924,13 @@ mod tests {
             Attrs::new(),
             src.clone(),
         ));
+        // A complete intent node: DM §7.2 marks eight of its attrs `always`,
+        // and `serialize` enforces the presence column, so a stub would refuse
+        // here for a reason that has nothing to do with what this test pins.
         g.add_node(Node::new(
             NodeKind::Intent,
             id::intent("myrepo", "INT-042"),
-            Attrs::new()
-                .str("status", "merged")
-                .bytes("title", b"Invoice totals include tax"),
+            complete_intent_attrs(),
             src.clone(),
         ));
         g.add_edge(Edge::new(

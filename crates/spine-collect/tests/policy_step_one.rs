@@ -85,17 +85,24 @@ fn a_zero_timeout_refuses_the_job_rather_than_disabling_the_deadline() {
         .expect_err("MF §3.11 refuses a zero timeout before the collector sees it");
     assert_eq!(refused.status.token(), "timeout-out-of-range");
 
-    // And the collector's own check, over a policy value that reached it some
-    // other way.
-    let policy = Policy {
-        timeout_secs: 0,
-        ..Policy::read(&trunk(VECTOR), Mode::Ci).expect("conforming")
-    };
-    assert_eq!(policy.timeout_secs, 0);
+    // And the collector's own check, reached directly.
+    //
+    // The second half of this test used to build a `Policy` struct literal with
+    // `timeout_secs: 0`, assert that field equalled 0, and compare a
+    // `&'static str` to itself — asserting coverage it did not have, over a
+    // branch nothing in the suite executed. `deadline_from_secs` exists so the
+    // branch is reachable, and these are the assertions the old ones claimed.
     assert_eq!(
-        Refusal::TimeoutOutOfRange.token(),
-        "timeout-out-of-range",
-        "the collector spells the fault the way MF §3.11 already does"
+        spine_collect::collector::deadline_from_secs(0),
+        Err(Refusal::TimeoutOutOfRange),
+        "a zero deadline is a refusal, never an absent deadline"
+    );
+    assert!(spine_collect::collector::deadline_from_secs(1).is_ok());
+    assert!(spine_collect::collector::deadline_from_secs(86_400).is_ok());
+    assert_eq!(
+        spine_collect::collector::deadline_from_secs(86_401),
+        Err(Refusal::TimeoutOutOfRange),
+        "and MF §3.3's upper bound is the collector's too"
     );
 }
 

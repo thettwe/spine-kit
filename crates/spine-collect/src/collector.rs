@@ -208,10 +208,29 @@ fn timeout(trunk: &Manifest) -> Result<u64, Refusal> {
         return Ok(DEFAULT_TIMEOUT_SECS);
     };
     match member.as_u64() {
-        // "strictly positive": RF §13 R24 refuses `0` because it would spell
-        // "no deadline", and PB §6.7 admits no such value.
-        Some(n) if n > 0 => Ok(n),
-        _ => Err(Refusal::TimeoutOutOfRange),
+        Some(n) => deadline_from_secs(n),
+        // Present and not an integer at all.
+        None => Err(Refusal::TimeoutOutOfRange),
+    }
+}
+
+/// The deadline bound, on its own so something can call it.
+///
+/// "strictly positive": RF §13 R24 refuses `0` because it would spell "no
+/// deadline", and PB §6.7 admits no such value.
+///
+/// This is `pub` for a reason worth stating. `Manifest::parse` refuses every
+/// out-of-range spelling first, so this branch is unreachable through the
+/// dependency's public constructor — and until 2026-08-28 the test that claimed
+/// to cover it compared a `&'static str` to itself instead. A check nothing can
+/// call is a check nothing verifies, and RF §7.1 makes "a collector enforcing
+/// no deadline" non-conformant, so the check stays and is now reachable.
+pub fn deadline_from_secs(secs: u64) -> Result<u64, Refusal> {
+    // MF §3.3's domain, which this must not contradict: `1 <= t <= 86400`.
+    if (1..=86_400).contains(&secs) {
+        Ok(secs)
+    } else {
+        Err(Refusal::TimeoutOutOfRange)
     }
 }
 
@@ -609,10 +628,26 @@ pub fn collect(
 /// non-`complete` contributions. It reads no invocation order and no wall time,
 /// which is what RF §4.5's determinism claim requires.
 ///
-/// An empty invocation set folds to `complete` vacuously. It is unreachable in
-/// a conforming repository — MF §3.11's `langs-empty` keeps an empty
-/// `params.langs` off trunk — and it is what "iff every" says.
+/// **An empty invocation set does not fold to `complete`.**
+///
+/// "iff every" is vacuously true over nothing, and taking that reading gave a
+/// runner-less run a fully green, zero-evidence file: `status=complete`,
+/// `ids=0`, no records, and — before the `floor_holds` fix beside it — a
+/// satisfied floor. That is the vacuous quick-lane pass RF §7.3 spends a
+/// paragraph closing, arrived at from the other end.
+///
+/// The argument for the vacuous reading was that MF §3.11's `langs-empty`
+/// keeps an empty `params.langs` off trunk, so a conforming repository cannot
+/// reach it. That is true and it is not enough: the check lives in another
+/// crate, this function does not consult it, and "unreachable in a conforming
+/// repository" is exactly the phrase that precedes a fail-open. Where the
+/// corpus is silent the fail-closed reading was available, so it is taken:
+/// a run that invoked no runner collected no evidence, and `base-collect-failed`
+/// is the status for a run whose `B` collection produced nothing.
 pub fn fold(contributions: &[Status]) -> Status {
+    if contributions.is_empty() {
+        return Status::BaseCollectFailed;
+    }
     contributions
         .iter()
         .copied()

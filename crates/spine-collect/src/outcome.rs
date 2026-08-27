@@ -145,7 +145,23 @@ impl BaseOutcome {
     /// That is why this returns `bool` and not the outcome: exposing the value
     /// to a caller invites a second consumer, and RF §4.4 says there is exactly
     /// one. `out` on a `base` record "is never a pass and never evidence".
-    pub fn exempts_from_findings(self) -> bool {
+    ///
+    /// **This is one conjunct of clause 2, not the clause.** It was named
+    /// `exempts_from_findings` until 2026-08-28, which claimed the whole
+    /// carve-out and would have let a caller exempt a *deleted* test. RF §8.5:
+    ///
+    /// > **It does not reach the *went away* shape, and that is the boundary.**
+    /// > … a vanished `xfail` or `skipped` id is allocated below exactly as any
+    /// > other vanished id is, and still takes a `class=protected` `G8:<path>`
+    /// > review.
+    ///
+    /// So clause 2 is *this* **and** the pair still collecting on `T`. The
+    /// second conjunct is a property of the file, not of the outcome, and lives
+    /// with the file: [`crate::ResultFile::pair_collected_on_t`]. A gate layer
+    /// that reads this predicate alone exempts a deleted `xfail` from the
+    /// review that is the whole point of the boundary — the fail-open
+    /// direction, which is why the name now says only what it decides.
+    pub fn was_xfail_or_skipped_on_b(self) -> bool {
         matches!(
             self,
             BaseOutcome::Reported(Outcome::Xfail) | BaseOutcome::Reported(Outcome::Skipped)
@@ -230,9 +246,9 @@ mod tests {
     #[test]
     fn only_xfail_and_skipped_on_b_exempt_a_pair_from_findings() {
         for o in ALL {
-            let exempt = BaseOutcome::Reported(o).exempts_from_findings();
+            let exempt = BaseOutcome::Reported(o).was_xfail_or_skipped_on_b();
             assert_eq!(exempt, o == Outcome::Xfail || o == Outcome::Skipped, "{o}");
         }
-        assert!(!BaseOutcome::Absent.exempts_from_findings());
+        assert!(!BaseOutcome::Absent.was_xfail_or_skipped_on_b());
     }
 }

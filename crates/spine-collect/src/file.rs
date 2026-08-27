@@ -51,19 +51,94 @@ impl ResultFile {
     /// disagreement is another implementation's bug rather than this one's.
     pub fn new(
         provenance: Provenance,
+        base: Vec<BaseRecord>,
+        results: Vec<ResultRecord>,
+        status: Status,
+    ) -> Self {
+        Self::build(provenance, base, results, status)
+            .expect("callers that may produce a duplicate pair must use `try_new`")
+    }
+
+    /// The fallible form, and the one the collector uses.
+    ///
+    /// Two invariants are enforced here rather than at a call site, for the
+    /// reason `new` already gives about `ids=`: "a value the caller supplies is
+    /// a value the caller can get wrong."
+    ///
+    /// **Pair uniqueness.** RF §11 item 5 makes it a conformance obligation on
+    /// the *writer*, not only the reader. Sorting without checking strict
+    /// ascension let two adapters sharing a `runner` token emit a file this
+    /// crate's own [`ResultFile::parse`] then rejects as `result-malformed` —
+    /// a writer that cannot read back what it wrote.
+    ///
+    /// **The all-or-nothing statuses.** RF §7.3: on a failed `B` enumeration
+    /// "`ids=0`, and **no `base` and no `result` records are written at all**,
+    /// from any runner." Enforcing it in the constructor makes it a property of
+    /// the type instead of a property of one call site.
+    pub fn try_new(
+        provenance: Provenance,
+        base: Vec<BaseRecord>,
+        results: Vec<ResultRecord>,
+        status: Status,
+    ) -> Result<Self, WriteRefusal> {
+        Self::build(provenance, base, results, status)
+    }
+
+    fn build(
+        provenance: Provenance,
         mut base: Vec<BaseRecord>,
         mut results: Vec<ResultRecord>,
         status: Status,
-    ) -> Self {
+    ) -> Result<Self, WriteRefusal> {
         base.sort_by(|a, b| a.key().cmp(&b.key()));
         results.sort_by(|a, b| a.key().cmp(&b.key()));
+
+        for pair in base.windows(2) {
+            if pair[0].key() == pair[1].key() {
+                return Err(WriteRefusal::DuplicatePair {
+                    section: "base",
+                    runner: pair[0].runner.to_string(),
+                    id: pair[0].id.clone(),
+                });
+            }
+        }
+        for pair in results.windows(2) {
+            if pair[0].key() == pair[1].key() {
+                return Err(WriteRefusal::DuplicatePair {
+                    section: "result",
+                    runner: pair[0].runner.to_string(),
+                    id: pair[0].id.clone(),
+                });
+            }
+        }
+
+        // All-or-nothing applies to the failed **enumeration** and to nothing
+        // else. RF §7.3 draws the line precisely, and it is the asymmetry the
+        // build plan's R14 names: a failed `B` enumeration is all-or-nothing
+        // across runners ("`ids=0`, and no `base` and no `result` records are
+        // written at all, from any runner"), while a failed `B` *outcome* run
+        // "is not a status at all", and a `stream-invalid` runner keeps its
+        // `base` records and loses only its `result` records.
+        //
+        // So the test is `== BaseCollectFailed`, not `!credits_outcomes()`.
+        // The wider reading was written here first and a `stream-invalid`
+        // integration test refused it — correctly: the two statuses credit
+        // nothing for different reasons and only one of them empties the file.
+        if status == Status::BaseCollectFailed && !(base.is_empty() && results.is_empty()) {
+            return Err(WriteRefusal::BodyBesideAllOrNothingStatus {
+                status: status.token(),
+                base: base.len(),
+                results: results.len(),
+            });
+        }
+
         let header = provenance.into_header(base.len() as u64);
-        ResultFile {
+        Ok(ResultFile {
             header,
             base,
             results,
             status,
-        }
+        })
     }
 
     /// RF §4.1's framing: "UTF-8, no BOM … Lines are terminated by a single LF
@@ -237,6 +312,27 @@ impl ResultFile {
     /// passes vacuously: "a quick-lane landing has no frozen ids, so its G1 is
     /// the `B` floor alone, and a `base-collect-failed` file would otherwise
     /// satisfy it by emptiness."
+    /// Clause 2's **second** conjunct: does this pair still collect on `T`?
+    ///
+    /// RF §8.5's carve-out releases an id that was `xfail` or `skipped` on `B`
+    /// **and whose pair still collects on `T`**. The boundary is stated in
+    /// terms:
+    ///
+    /// > **It does not reach the *went away* shape, and that is the boundary.**
+    /// > … a vanished `xfail` or `skipped` id is allocated below exactly as any
+    /// > other vanished id is, and still takes a `class=protected` `G8:<path>`
+    /// > review.
+    ///
+    /// "Collects" and "passes" are different questions, which is why this is
+    /// not [`Self::pair_passed`]: an id that ran on `T` and failed has not gone
+    /// away, and an id that vanished did — the carve-out turns on presence, and
+    /// the finding it releases is about the outcome.
+    pub fn pair_collected_on_t(&self, runner: &str, id: &str) -> bool {
+        self.results
+            .iter()
+            .any(|r| r.runner.as_str() == runner && r.id == id)
+    }
+
     pub fn pair_passed(&self, runner: &str, id: &str) -> bool {
         if !self.status.credits_outcomes() {
             return false;
@@ -283,11 +379,72 @@ impl ResultFile {
     /// `r.id == b.id` and `r.out == "passed"`, by exact string equality on
     /// both."
     pub fn floor_holds(&self) -> bool {
+        // The status conjunct FIRST, and `all` is exactly why.
+        //
+        // RF §7.3: "This closes the one place where an empty or near-empty file
+        // could pass vacuously: a quick-lane landing has no frozen ids, so its
+        // G1 is the `B` floor alone, and a `base-collect-failed` file would
+        // otherwise satisfy it by emptiness."
+        //
+        // `pair_passed` carries the same conjunct, but over an EMPTY floor it
+        // is never called — `all` on an empty iterator is `true` — so the guard
+        // inside it does not reach this case. A file with `ids=0` and
+        // `end.status=base-collect-failed` is precisely the shape §7.3 spends a
+        // paragraph closing, and without this line it is the shape that passes.
+        if !self.status.credits_outcomes() {
+            return false;
+        }
         self.base
             .iter()
             .all(|b| self.pair_passed(b.runner.as_str(), &b.id))
     }
 }
+
+/// Why the **write** path refused to build a file.
+///
+/// Distinct from the read path's refusals on purpose: these are this
+/// implementation's own bugs caught before they reach a byte, whereas a
+/// `result-malformed` on the read side is another implementation's. Neither
+/// token ever reaches a wire — a refused run writes no file at all.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WriteRefusal {
+    /// Two records share a `(runner, id)` pair. RF §11 item 5 makes uniqueness
+    /// a writer's obligation, not only a reader's.
+    DuplicatePair {
+        section: &'static str,
+        runner: String,
+        id: String,
+    },
+    /// A status RF §7.3 makes all-or-nothing, carrying records anyway.
+    BodyBesideAllOrNothingStatus {
+        status: &'static str,
+        base: usize,
+        results: usize,
+    },
+}
+
+impl core::fmt::Display for WriteRefusal {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            WriteRefusal::DuplicatePair { section, runner, id } => write!(
+                f,
+                "two {section} records share the pair ({runner}, {id}); \
+                 RF §11 item 5 makes pair uniqueness the writer's obligation too"
+            ),
+            WriteRefusal::BodyBesideAllOrNothingStatus {
+                status,
+                base,
+                results,
+            } => write!(
+                f,
+                "status {status} requires ids=0 and no records from any runner \
+                 (RF §7.3), but {base} base and {results} result records were supplied"
+            ),
+        }
+    }
+}
+
+impl core::error::Error for WriteRefusal {}
 
 /// RF §4.5's sort, and RF §4.4's uniqueness, in one comparison.
 ///
@@ -516,7 +673,7 @@ mod tests {
             .iter()
             .find(|b| b.id == "tests/billing/test_discounts.py::test_percentage_discount")
             .expect("the pair is in the floor");
-        assert!(carved.out.exempts_from_findings());
+        assert!(carved.out.was_xfail_or_skipped_on_b());
         // And it is still not a pass: RF §5, "Neither `xfail` nor `skipped` is
         // a pass, and every clause of §8.5 that asks *did this id pass* still
         // answers no. What changed is not the enum but the **allocation**."
@@ -741,14 +898,35 @@ keys_visible=false profile=none ids=1\n{dup}\n{{\"status\":\"complete\",\"t\":\"
         assert_eq!(String::from_utf8_lossy(&bytes).lines().count(), 2);
         assert!(String::from_utf8_lossy(&bytes).contains(" ids=0\n"));
         let read = ResultFile::parse(&bytes, TREE, ObjectFormat::Sha1).expect("well formed");
-        // "This closes the one place where an empty or near-empty file could
-        // pass vacuously": the floor is empty, so `all` is vacuously true, and
-        // the status conjunct is the only thing standing between that and a
-        // credited landing.
-        assert!(read.floor_holds(), "vacuous over an empty floor");
+        // RF §7.3: "This closes the one place where an empty or near-empty file
+        // could pass vacuously: a quick-lane landing has no frozen ids, so its
+        // G1 is the `B` floor alone, and a `base-collect-failed` file would
+        // otherwise satisfy it by emptiness."
+        //
+        // This assertion is the closure. It read `assert!(read.floor_holds())`
+        // until 2026-08-28 — pinning the vacuity rather than the rule — on the
+        // reasoning that `pair_passed` carries the status conjunct. It does,
+        // and over an empty floor it is never called, because `all` on an empty
+        // iterator is `true`. The one file shape §7.3 names was the one shape
+        // the guard could not reach.
+        assert!(
+            !read.floor_holds(),
+            "a file that collected no floor at all must not satisfy the floor"
+        );
         assert!(
             !read.status.credits_outcomes(),
-            "and credits nothing, which is the rule that matters"
+            "and it is the status that decides it, not the emptiness"
         );
+
+        // The rule is about what the status credits, not about being empty: a
+        // `complete` file with a genuinely empty floor is a different thing and
+        // still holds.
+        let empty_but_complete = ResultFile::new(
+            provenance(Profile::None),
+            Vec::new(),
+            Vec::new(),
+            Status::Complete,
+        );
+        assert!(empty_but_complete.floor_holds());
     }
 }

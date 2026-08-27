@@ -120,8 +120,21 @@ impl Graph {
     /// order — which is walk order, the thing §13.5 refuses — the minimum is
     /// taken over `canonical(attrs) ‖ NUL ‖ src`, the tail of the node key.
     /// Where the attrs agree this reduces to §5.5's rule exactly.
+    /// The match is on `(id, kind)` and **not on `id` alone**.
+    ///
+    /// DM §5.5's collapse is over records of the same node; two records of
+    /// different *kinds* sharing an id are not one node collapsing, they are an
+    /// id collision — DM §17 item 14 makes `id` unique across the whole node
+    /// section, so the collision is a defect and not a merge. Keying on `id`
+    /// alone silently kept one and dropped the other, which loses a node from
+    /// the dump G10 diffs; keying on the pair lets both reach `serialize`,
+    /// where the uniqueness check refuses the pair loudly.
     pub fn add_node(&mut self, node: Node) {
-        match self.nodes.iter_mut().find(|n| n.id == node.id) {
+        match self
+            .nodes
+            .iter_mut()
+            .find(|n| n.id == node.id && n.kind == node.kind)
+        {
             Some(existing) => {
                 if node_tail(&node) < node_tail(existing) {
                     *existing = node;

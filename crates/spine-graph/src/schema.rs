@@ -84,6 +84,43 @@ impl NodeKind {
     /// Two absences are deliberate and are the two DM §8.4 excludes:
     /// `test.result_at` (volatile, and the kind's only attr, so every `test`
     /// node carries `{}`) and `verified_by.introduced_by` — see [`EdgeKind`].
+    /// DM §7.2's **presence** column, the `always` rows only.
+    ///
+    /// Transcribed from the table rather than inferred from `attr_type`, which
+    /// says nothing about presence: a kind's attr set and its *mandatory* attr
+    /// set are different facts and §7.2 gives them in different columns.
+    ///
+    /// An `always` attr that is absent is a node the dump can hold and no
+    /// reader can use. For `changeset.landing` in particular the absence was
+    /// load-bearing: DM §7.2's member-changeset rule is written over the value
+    /// being present and `false`, so a changeset omitting it escaped the rule
+    /// entirely and could carry seal fields it has no seal for.
+    ///
+    /// `changeset` lists only `landing`, because §7.2's second row makes every
+    /// other changeset attr conditional — "*(the rest)* … iff `landing` is
+    /// `true`". `test` lists none: "`{}` always".
+    pub fn always_present_attrs(self) -> &'static [&'static str] {
+        match self {
+            NodeKind::Intent => &[
+                "status",
+                "title",
+                "template",
+                "blob",
+                "reopen_count",
+                "late_reopen_count",
+                "landing",
+                "base",
+            ],
+            NodeKind::Changeset => &["landing"],
+            NodeKind::Approval => &["event", "role", "principal", "verified"],
+            NodeKind::Signer => &["roles", "fingerprint", "valid_from"],
+            // "A kind PB §6.2 does not give attrs for has none in the dump":
+            // `ac`, `adr`, `code_unit`, `constitution` — and `test`, whose only
+            // attr §8.4 excludes.
+            _ => &[],
+        }
+    }
+
     pub fn attr_type(self, name: &str) -> Option<AttrType> {
         use AttrType::{Bool, Int, Str, StrArr};
         match (self, name) {
