@@ -11,5 +11,10 @@ spine-canon = { path = "../spine-canon" }
 spine-manifest = { path = "../spine-manifest" }
 spine-template = { path = "../spine-template" }
 
+[features]
+# Mirrors spine-cli's feature so the end-to-end tests can tell which binary they
+# are running against. Enabling it here does not change spine-init's own code.
+synthetic-release = []
+
 [lints]
 workspace = true

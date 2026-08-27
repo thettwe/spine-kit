@@ -1,0 +1,11 @@
+# Rendered by `spine init --ci gitlab` from template ci-gitlab@N. spine-owned.
+# Requires GitLab >= 15.0 for variable expansion in `include:project`.
+include:
+  - project: '$CI_PROJECT_PATH'
+    ref: 'main'
+    file:
+      - '/.spine/gitlab/untrusted.yml'
+      - '/.spine/gitlab/trusted.yml'
+
+stages:
+  - spine

@@ -16,5 +16,12 @@ spine-manifest = { path = "../spine-manifest" }
 spine-init = { path = "../spine-init" }
 spine-template = { path = "../spine-template" }
 
+[features]
+# Compiles `release/release.synthetic.json` into the binary so `spine init` can
+# run its apply path. OFF by default: without it this is a development build and
+# init refuses every plan row, which is ci.md §3.4's specified behaviour and not
+# a gap. See `release/README.md` — a binary built with this must never ship.
+synthetic-release = []
+
 [lints]
 workspace = true

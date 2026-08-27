@@ -1,0 +1,33 @@
+spine-collect:
+  stage: spine
+  interruptible: true
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "merge_request_event"
+           && $CI_MERGE_REQUEST_TARGET_BRANCH_NAME == "main"
+           && $CI_COMMIT_REF_NAME =~ /^(intent\/|quick\/|spine\/upgrade-)/'
+    - when: never
+  variables:
+    GIT_STRATEGY: clone
+    GIT_DEPTH: 0
+    SPINE_TRUNK: "main"
+  script:
+    - |
+      set -eu
+      git fetch --no-tags --prune origin \
+        "+refs/heads/$SPINE_TRUNK:refs/remotes/origin/$SPINE_TRUNK" \
+        "+refs/heads/$CI_COMMIT_REF_NAME:refs/heads/$CI_COMMIT_REF_NAME"
+      git checkout -q "$CI_COMMIT_REF_NAME"
+      d="$(mktemp -d)"
+      git show "origin/$SPINE_TRUNK:.spine/ci.sh" >"$d/ci.sh"
+      rc=0
+      sh "$d/ci.sh" collect "$SPINE_TRUNK" "$CI_COMMIT_REF_NAME" >"$d/out" || rc=$?
+      if [ "$rc" -eq 2 ]; then echo "spine: ci.sh refused" >&2; exit 1; fi
+      line="$(cat "$d/out")"
+      case "$line" in result=*) ;; *) echo "spine: no result line" >&2; exit 1 ;; esac
+      echo "spine: handing over ${line#result=}" >&2
+      exit "$rc"
+  artifacts:
+    when: always
+    expire_in: 1 day
+    paths:
+      - ".spine/cache/results/"

@@ -7,7 +7,7 @@
 //! writing the paths that happened to pass. A repository half-scaffolded by a
 //! bad release is worse than one not scaffolded at all."
 
-use spine_init::plan::{self, Action, Desired};
+use spine_init::plan::{self, Action, Desired, TreeSource};
 use spine_init::{HeadTree, Repo};
 use spine_manifest::schema::Owner;
 use spine_template::constitution;
@@ -18,16 +18,32 @@ use crate::exit;
 
 /// The embedded release manifest (CI §3.4).
 ///
-/// **There is none, and that is the specified state of this build.** CI §18
-/// OPEN-1 (the distribution host) and OPEN-7 (the three GitHub Action commit
-/// pins) are the owner's and are not in the corpus: "Until both are chosen no
-/// release manifest can be frozen, and therefore no binary built from this
-/// corpus renders a CI definition at all — which is the correct behaviour for a
-/// design whose CI argument rests on a pinned release."
+/// **Ordinarily there is none, and that is the specified state of this build.**
+/// CI §18 OPEN-1 (the distribution host) and OPEN-7 (the three GitHub Action
+/// commit pins) are the owner's and are not in the corpus: "Until both are
+/// chosen no release manifest can be frozen, and therefore no binary built from
+/// this corpus renders a CI definition at all — which is the correct behaviour
+/// for a design whose CI argument rests on a pinned release."
 ///
-/// So this build is a **development build** and `init` refuses every plan row
-/// with `no-release-manifest`. That refusal is the feature, not a gap.
+/// So the default build is a **development build** and `init` refuses every
+/// plan row with `no-release-manifest`. That refusal is the feature, not a gap.
+///
+/// The `synthetic-release` feature compiles in `release/release.synthetic.json`
+/// instead, whose every value is deliberately unusable — a `.invalid` host and
+/// three commits that exist in no repository — so the apply path can be
+/// exercised without anything pretending to be a release.
+///
+/// **A feature and not an environment variable**, because CI §3.4 makes this a
+/// build input read once and frozen: "Nothing at run time re-reads it from
+/// disk, so a repository cannot supply one and a candidate cannot forge one." A
+/// runtime override would hand a candidate the one input the whole
+/// trusted-execution argument rests on.
+#[cfg(not(feature = "synthetic-release"))]
 const EMBEDDED_RELEASE_MANIFEST: Option<&str> = None;
+
+#[cfg(feature = "synthetic-release")]
+const EMBEDDED_RELEASE_MANIFEST: Option<&str> =
+    Some(include_str!("../../../release/release.synthetic.json"));
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -114,9 +130,6 @@ pub fn run(options: &Init) -> Result<u8> {
         return Ok(exit::REFUSED);
     };
 
-    // The render set. Only the constitution seed is rendered by this build —
-    // every CI path needs the release manifest, which a development build does
-    // not have.
     let owner_principal = options
         .identity
         .clone()
@@ -128,12 +141,26 @@ pub fn run(options: &Init) -> Result<u8> {
         langs: &lang_refs,
     });
 
+    // The render set, in `esc`-path order once the plan sorts it.
     let mut desired = vec![Desired {
+        // `user-owned`: spine seeds it once and never touches it again, not by
+        // upgrade, not by --force, not by rollback (PB §6.7).
         path: "CONSTITUTION.md".into(),
         owner: Owner::UserOwned,
         template: "constitution@1".into(),
         content: seed.into_bytes(),
     }];
+    // PB §11's three managed regions. Each is a block inside a file spine does
+    // not own, located by its markers only.
+    for (path, template, body) in spine_template::regions::V1_REGIONS {
+        let version = template_version(template).expect("a v1 template");
+        desired.push(Desired {
+            path: path.into(),
+            owner: Owner::SpineOwned,
+            template: format!("{template}@{version}"),
+            content: body.as_bytes().to_vec(),
+        });
+    }
     desired.extend(ci_paths(&ci));
 
     // CI §3.4 step 1: "Validate first … **before any plan is computed**."
@@ -146,7 +173,31 @@ pub fn run(options: &Init) -> Result<u8> {
             }
             Ok(_release) => {
                 let tree = HeadTree { repo: &repo };
-                plan::compute(&tree, &desired, None, &|name| template_version(name))
+                // **The manifest already in the tree, if there is one.**
+                //
+                // Without it every path a previous run wrote reads as
+                // `foreign` — present in HEAD, claimed by no record — and
+                // `spine-owned` + foreign is a refusal. So a clean re-run of an
+                // initialised repository refused four of its own five paths.
+                //
+                // PB §6.7: "On an initialised repo, `init` is idempotent", and
+                // idempotence is *this* comparison: "it renders every template
+                // the binary ships using the manifest's `params`, compares blob
+                // ids, and emits a per-path plan". A plan computed against no
+                // manifest is a plan that cannot tell spine's own work from a
+                // stranger's.
+                //
+                // Read from HEAD and not the working tree, for the reason the
+                // rest of the plan is: an uncommitted manifest is not what the
+                // last completed run landed.
+                let previous = tree
+                    .read(".spine/manifest.json")
+                    .and_then(|bytes| {
+                        spine_manifest::Manifest::parse(&bytes, Some(format_of(&repo))).ok()
+                    });
+                plan::compute(&tree, &desired, previous.as_ref(), &|name| {
+                    template_version(name)
+                })
             }
         },
     };
@@ -182,8 +233,136 @@ pub fn run(options: &Init) -> Result<u8> {
         return Ok(exit::OK);
     }
 
-    eprintln!("spine init: the apply path is not yet wired; re-run with --dry-run");
-    Ok(exit::ERROR)
+    // ---- The apply. PB §6.7 step 4's ordering, in spine-init::apply. ------
+    let format = repo.object_format();
+    let root = repo.root().to_path_buf();
+    let release = EMBEDDED_RELEASE_MANIFEST
+        .and_then(|bytes| spine_template::ReleaseManifest::parse(bytes.as_bytes()).ok())
+        .ok_or("a plan that did not refuse implies a release manifest")?;
+
+    let applied = spine_init::apply::apply(
+        &root,
+        &plan,
+        &desired,
+        format,
+        &template_version,
+        &|applied| {
+            build_manifest(
+                repo_name,
+                &release,
+                format,
+                &trunk,
+                &ci,
+                options.isolation.as_deref(),
+                &langs,
+                applied,
+            )
+        },
+    )?;
+
+    for entry in &applied {
+        println!("{} {}", entry.action.token(), entry.path);
+    }
+    println!();
+    println!(
+        "wrote {} path(s) and .spine/manifest.json;          the manifest describes the last completed run (PB §6.7 step 4)",
+        applied.len()
+    );
+    Ok(exit::OK)
+}
+
+/// The manifest the run just completed, built from the blobs it actually wrote.
+///
+/// It is a closure argument to `apply` rather than a value because it records
+/// what was written — so it cannot be built before the renders are known, and
+/// it must still be recorded in staging before any rename.
+#[allow(clippy::too_many_arguments)]
+fn build_manifest(
+    repo_name: &str,
+    release: &spine_template::ReleaseManifest,
+    format: spine_canon::ObjectFormat,
+    trunk: &str,
+    ci: &str,
+    isolation: Option<&str>,
+    langs: &[String],
+    applied: &[spine_init::Applied],
+) -> Vec<u8> {
+    let files = applied
+        .iter()
+        .map(|entry| spine_manifest::FileEntry {
+            path: entry.path.clone(),
+            owner: owner_of(&entry.path),
+            blob: entry.blob.clone(),
+            template: Some(template_of(&entry.path).to_string()),
+            base: None,
+        })
+        .collect();
+
+    let builder = spine_manifest::Builder {
+        repo: repo_name.to_string(),
+        cli_version: release.version.clone(),
+        // CI §5.5 fixes `dist_hash` as the digest of the release's artifact
+        // list, which is "fixed only once every artifact is built" — so it is
+        // not a member of the release manifest and a build that has not cut a
+        // release does not have one. A synthetic build carries the digest of
+        // its own version string, which is a value, is 64 hex, and is
+        // unmistakably not a real artifact list.
+        cli_dist_hash: spine_canon::sha256_prefixed(release.version.as_bytes()),
+        object_format: format,
+        schema: 7,
+        envelope: 1,
+        manifest_version: 1,
+        trunk: trunk.to_string(),
+        ci: ci.to_string(),
+        isolation: isolation.map(str::to_string),
+        langs: langs.to_vec(),
+        timeout: None,
+        paths: vec![(
+            "constitution".to_string(),
+            vec!["CONSTITUTION.md".to_string()],
+        )],
+        templates: spine_manifest::schema::V1_TEMPLATES
+            .iter()
+            .map(|name| ((*name).to_string(), template_version(name).unwrap_or(1)))
+            .collect(),
+        resign: spine_manifest::schema::RESIGN_KEYS
+            .iter()
+            .map(|name| ((*name).to_string(), template_version(name).unwrap_or(1)))
+            .collect(),
+        files,
+    };
+    builder
+        .build()
+        .expect("init builds a conforming manifest")
+        .to_bytes()
+}
+
+fn format_of(repo: &Repo) -> spine_canon::ObjectFormat {
+    repo.object_format()
+}
+
+/// PB §6.7's three ownership classes, by path.
+fn owner_of(path: &str) -> Owner {
+    match path {
+        // "spine once (seed), humans after. Never touched again."
+        "CONSTITUTION.md" | ".spine/allowed_signers" => Owner::UserOwned,
+        _ => Owner::SpineOwned,
+    }
+}
+
+fn template_of(path: &str) -> &'static str {
+    match path {
+        "CONSTITUTION.md" => "constitution@1",
+        "AGENTS.md#spine" => "agents-block@2",
+        ".gitignore#spine" => "gitignore@1",
+        ".gitattributes#spine" => "gitattributes@1",
+        ".github/workflows/spine-collect.yml" => "ci-github-collect@4",
+        ".github/workflows/spine-land.yml" => "ci-github-land@4",
+        ".gitlab-ci.yml" | ".spine/gitlab/untrusted.yml" | ".spine/gitlab/trusted.yml" => {
+            "ci-gitlab@4"
+        }
+        _ => "ci-generic@4",
+    }
 }
 
 /// PB §11's detection table, verbatim: "`pyproject.toml` or `setup.cfg` ⇒

@@ -1,0 +1,143 @@
+# Rendered by `spine init --ci github` from template ci-github-land@N. spine-owned.
+name: spine-land
+
+on:
+  workflow_run:
+    workflows: ["spine-collect"]
+    types: [completed]
+
+permissions:
+  actions: write
+  contents: read
+
+concurrency:
+  group: spine-land
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash --noprofile --norc -euo pipefail {0}
+
+jobs:
+  land:
+    # Rule 0, as three provider facts a candidate cannot forge.
+    if: >-
+      github.event.workflow_run.event == 'pull_request_target' &&
+      github.event.workflow_run.path == '.github/workflows/spine-collect.yml' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    environment: spine-trusted
+    timeout-minutes: 120
+    env:
+      SPINE_TRUNK: "main"
+      SPINE_CANDIDATE: ${{ github.event.workflow_run.head_branch }}
+      SPINE_RUN_ID: ${{ github.event.workflow_run.id }}
+      SPINE_TRUST_ROOT: ${{ vars.SPINE_TRUST_ROOT }}
+      SPINE_PIPELINE_KEY: ${{ secrets.SPINE_PIPELINE_KEY }}
+      SPINE_PUSH_TOKEN: ${{ secrets.SPINE_PUSH_TOKEN }}
+    steps:
+      - name: Refuse anything that is not a candidate ref
+        run: |
+          case "$SPINE_CANDIDATE" in
+            intent/*|quick/*|spine/upgrade-*) ;;
+            *) echo "spine: not a candidate ref: $SPINE_CANDIDATE" >&2; exit 1 ;;
+          esac
+          for v in SPINE_TRUST_ROOT SPINE_PIPELINE_KEY SPINE_PUSH_TOKEN; do
+            eval "s=\${$v:-}"
+            if [ -z "$s" ]; then echo "spine: $v is unset" >&2; exit 1; fi
+          done
+
+      - uses: actions/checkout@PIN_CHECKOUT
+        with:
+          ref: "main"
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Authenticate git without writing a credential to disk
+        run: |
+          b64="$(printf 'x-access-token:%s' "$SPINE_PUSH_TOKEN" | base64 | tr -d '\n')"
+          echo "::add-mask::$b64"
+          {
+            echo "GIT_CONFIG_COUNT=1"
+            echo "GIT_CONFIG_KEY_0=http.${{ github.server_url }}/.extraheader"
+            echo "GIT_CONFIG_VALUE_0=AUTHORIZATION: basic $b64"
+          } >>"$GITHUB_ENV"
+
+      - name: Fetch trunk and every in-flight candidate ref
+        run: |
+          git fetch --no-tags --prune origin \
+            "+refs/heads/$SPINE_TRUNK:refs/remotes/origin/$SPINE_TRUNK" \
+            "+refs/heads/intent/*:refs/heads/intent/*" \
+            "+refs/heads/quick/*:refs/heads/quick/*" \
+            "+refs/heads/spine/upgrade-*:refs/heads/spine/upgrade-*"
+
+      - name: Install the pinned release
+        id: spine
+        run: |
+          d="$RUNNER_TEMP/spine"; mkdir -p "$d"; chmod 700 "$d"
+          git show "origin/$SPINE_TRUNK:.spine/ci.sh" >"$d/ci.sh"
+          SPINE_INSTALL_DIR="$d/bin" sh "$d/ci.sh" install "$SPINE_TRUNK" >"$d/path"
+          echo "bin=$(cat "$d/path")" >>"$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@PIN_DOWNLOAD_ARTIFACT
+        with:
+          name: spine-result
+          path: .spine/cache/results
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+
+      - name: Check the shape of the handoff
+        run: |
+          n="$(find .spine/cache/results -mindepth 1 | wc -l | tr -d ' ')"
+          if [ "$n" != "1" ]; then
+            echo "spine: the artifact holds $n entries, expected 1" >&2; exit 1
+          fi
+          f="$(find .spine/cache/results -mindepth 1)"
+          if [ ! -f "$f" ] || [ -L "$f" ]; then
+            echo "spine: the artifact entry is not a regular file" >&2; exit 1
+          fi
+          case "${f##*/}" in
+            *.jsonl) ;;
+            *) echo "spine: the artifact entry is not a .jsonl file" >&2; exit 1 ;;
+          esac
+
+      - name: Land
+        id: land
+        env:
+          SPINE_BIN: ${{ steps.spine.outputs.bin }}
+        run: |
+          case "$SPINE_CANDIDATE" in
+            quick/reseal-*)  set -- --land --reseal ;;
+            intent/*)        set -- --land "${SPINE_CANDIDATE#intent/}" ;;
+            quick/*)         set -- --land --quick "$SPINE_CANDIDATE" ;;
+            spine/upgrade-*) set -- --land ;;
+            *) echo "spine: unroutable candidate" >&2; exit 3 ;;
+          esac
+          rc=0
+          "$SPINE_BIN" check --ci "$@" </dev/null || rc=$?
+          echo "rc=$rc" >>"$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@PIN_UPLOAD_ARTIFACT
+        if: always() && steps.land.outputs.rc != ''
+        with:
+          name: spine-report
+          path: .spine/cache/report.json
+          if-no-files-found: warn
+          retention-days: 90
+
+      - name: Re-queue on base-moved
+        if: steps.land.outputs.rc == '2'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${SPINE_RUN_ID}/rerun"
+
+      - name: Report the landing's verdict
+        env:
+          RC: ${{ steps.land.outputs.rc }}
+        run: |
+          if [ "$RC" != "0" ]; then
+            echo "spine: check --ci --land exited $RC (see docs/spec/ci.md 6.6)" >&2
+            exit 1
+          fi

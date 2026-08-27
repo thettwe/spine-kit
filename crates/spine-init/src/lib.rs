@@ -10,10 +10,12 @@
 //! There is no upgrade command: on an initialised repository `init` is
 //! idempotent, and an upgrade is a re-run.
 
+pub mod apply;
 pub mod git;
 pub mod plan;
 pub mod staging;
 
+pub use apply::{Applied, ApplyError};
 pub use git::{HeadTree, Repo};
 pub use staging::{Interrupted, Staging};
 pub use plan::{Action, Plan, PlanRow, RefuseReason, State, TreeSource};

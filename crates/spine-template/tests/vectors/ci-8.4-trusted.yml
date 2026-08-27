@@ -1,0 +1,79 @@
+spine-land:
+  stage: spine
+  interruptible: false
+  resource_group: spine-land
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $CI_COMMIT_REF_NAME == "main"'
+    - when: never
+  variables:
+    GIT_STRATEGY: clone
+    GIT_DEPTH: 0
+    SPINE_TRUNK: "main"
+  script:
+    - |
+      set -eu
+      command -v jq >/dev/null || { echo "spine: jq is required" >&2; exit 3; }
+      for v in SPINE_TRUST_ROOT SPINE_PIPELINE_KEY SPINE_PUSH_TOKEN; do
+        eval "s=\${$v:-}"
+        [ -n "$s" ] || { echo "spine: $v is unset (protected variable?)" >&2; exit 3; }
+      done
+
+      api="$CI_API_V4_URL/projects/$CI_PROJECT_ID"
+      hdr="PRIVATE-TOKEN: $SPINE_PUSH_TOKEN"
+
+      git remote set-url origin \
+        "$(printf '%s' "$CI_REPOSITORY_URL" | sed "s#://[^@]*@#://spine:$SPINE_PUSH_TOKEN@#")"
+      git fetch --no-tags --prune origin \
+        "+refs/heads/$SPINE_TRUNK:refs/remotes/origin/$SPINE_TRUNK" \
+        "+refs/heads/intent/*:refs/heads/intent/*" \
+        "+refs/heads/quick/*:refs/heads/quick/*" \
+        "+refs/heads/spine/upgrade-*:refs/heads/spine/upgrade-*"
+
+      cand=''; jobid=''
+      for ref in $(git for-each-ref --format='%(refname:short)' \
+                     refs/heads/intent refs/heads/quick refs/heads/spine \
+                   | LC_ALL=C sort); do
+        sha="$(git rev-parse "refs/heads/$ref")"
+        pid="$(curl -fsS -H "$hdr" \
+               "$api/pipelines?sha=$sha&source=merge_request_event&per_page=1" \
+               | jq -r '.[0].id // empty')"
+        [ -n "$pid" ] || continue
+        jid="$(curl -fsS -H "$hdr" "$api/pipelines/$pid/jobs?per_page=100" \
+               | jq -r '[.[] | select(.name=="spine-collect")][0].id // empty')"
+        [ -n "$jid" ] || continue
+        cand="$ref"; jobid="$jid"; break
+      done
+      [ -n "$cand" ] || { echo "spine: no candidate with a result artifact" >&2; exit 0; }
+
+      mkdir -p .spine/cache
+      curl -fsS -H "$hdr" -o "$CI_PROJECT_DIR/art.zip" \
+        "$api/jobs/$jobid/artifacts"
+      rm -rf .spine/cache/results
+      unzip -qq -o "$CI_PROJECT_DIR/art.zip" '.spine/cache/results/*' -d .
+      rm -f "$CI_PROJECT_DIR/art.zip"
+      n="$(find .spine/cache/results -mindepth 1 | wc -l | tr -d ' ')"
+      [ "$n" = "1" ] || { echo "spine: artifact holds $n entries" >&2; exit 1; }
+      f="$(find .spine/cache/results -mindepth 1)"
+      { [ -f "$f" ] && [ ! -L "$f" ]; } || { echo "spine: not a regular file" >&2; exit 1; }
+      case "${f##*/}" in *.jsonl) ;; *) echo "spine: not .jsonl" >&2; exit 1 ;; esac
+
+      d="$(mktemp -d)"
+      git show "origin/$SPINE_TRUNK:.spine/ci.sh" >"$d/ci.sh"
+      bin="$(SPINE_INSTALL_DIR="$d/bin" sh "$d/ci.sh" install "$SPINE_TRUNK")"
+
+      case "$cand" in
+        quick/reseal-*)  set -- --land --reseal ;;
+        intent/*)        set -- --land "${cand#intent/}" ;;
+        quick/*)         set -- --land --quick "$cand" ;;
+        spine/upgrade-*) set -- --land ;;
+        *) echo "spine: unroutable candidate $cand" >&2; exit 3 ;;
+      esac
+      rc=0
+      "$bin" check --ci "$@" </dev/null || rc=$?
+      echo "spine: check --ci --land exited $rc (docs/spec/ci.md 6.6)" >&2
+      [ "$rc" -eq 0 ] || exit 1
+  artifacts:
+    when: always
+    expire_in: 90 days
+    paths:
+      - ".spine/cache/report.json"

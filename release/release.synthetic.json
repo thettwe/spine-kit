@@ -1,0 +1,10 @@
+{
+  "release_manifest_version": 1,
+  "version": "0.0.0-synthetic",
+  "dist_base": "https://dist.invalid/spine-synthetic",
+  "actions": {
+    "checkout":          { "repo": "actions/checkout",          "commit": "0000000000000000000000000000000000000001" },
+    "upload_artifact":   { "repo": "actions/upload-artifact",   "commit": "0000000000000000000000000000000000000002" },
+    "download_artifact": { "repo": "actions/download-artifact", "commit": "0000000000000000000000000000000000000003" }
+  }
+}
