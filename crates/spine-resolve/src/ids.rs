@@ -257,18 +257,32 @@ pub fn swift_case_suffix(id: &str) -> Option<(&str, &str)> {
 pub fn check_ambiguous_test_class<'a>(
     listing: impl IntoIterator<Item = &'a str>,
 ) -> Result<(), IdError> {
-    let mut seen: Vec<(&str, &str)> = Vec::new();
+    // The qualifier IR §11.5 puts on this check is "under different
+    // **targets**", and dropping it reported the wrong token for the other
+    // case: a repeated *identical* id is `duplicate-test-id` (IR §11.6 rule 2),
+    // which is a different fault with a different remedy. Two implementations
+    // reporting different tokens over one listing raise different wires, and a
+    // reviewer's `wires=` names one of them.
+    //
+    // So the pair is remembered with the target it came from, and only a
+    // collision **across** targets is ambiguity.
+    let mut seen: Vec<(&str, (&str, &str))> = Vec::new();
     for id in listing {
         let Some(pair) = swift_case_suffix(id) else {
             continue;
         };
-        if seen.contains(&pair) {
+        let target = id.split('.').next().unwrap_or("");
+        if let Some((other_target, _)) = seen
+            .iter()
+            .find(|(t, p)| *p == pair && *t != target)
+        {
+            let _ = other_target;
             return Err(IdError::AmbiguousTestClass {
                 class_path: pair.0.to_string(),
                 method: pair.1.to_string(),
             });
         }
-        seen.push(pair);
+        seen.push((target, pair));
     }
     Ok(())
 }
@@ -700,6 +714,31 @@ mod tests {
         assert_eq!(
             sugar_field(Runner::SwiftTest, "Billing.InvoiceTests/test_AC1_totals"),
             "_AC1_totals"
+        );
+    }
+
+    /// IR §11.5 qualifies this check "under different **targets**". Without the
+    /// qualifier a repeated identical id reported `ambiguous-test-class`, when
+    /// IR §11.6 rule 2 makes it `duplicate-test-id` — a different fault with a
+    /// different remedy, and a different wire for a reviewer to sign.
+    #[test]
+    fn ambiguity_is_across_targets_and_a_repeat_within_one_is_not() {
+        // Same class and method under two targets: ambiguous.
+        assert!(matches!(
+            check_ambiguous_test_class(["ModuleA.C/testX", "ModuleB.C/testX"]),
+            Err(IdError::AmbiguousTestClass { .. })
+        ));
+
+        // The identical id twice, under one target: not this check's fault.
+        assert!(
+            check_ambiguous_test_class(["ModuleA.C/testX", "ModuleA.C/testX"]).is_ok(),
+            "a repeated identical id is duplicate-test-id, not ambiguous-test-class"
+        );
+
+        // Different methods under one class, and different classes, are fine.
+        assert!(
+            check_ambiguous_test_class(["ModuleA.C/testX", "ModuleA.C/testY", "ModuleA.D/testX"])
+                .is_ok()
         );
     }
 }

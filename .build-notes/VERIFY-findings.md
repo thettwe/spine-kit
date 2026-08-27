@@ -1,6 +1,20 @@
 # Adversarial verification findings — 2026-08-27 workflow
 
-Raw output of the four verifier agents. Worked down in `VERIFY-worklist.md`.
+Raw output of the four verifier agents, 2026-08-27.
+
+**Status: worked down 2026-08-28.** Every `every-landing` and `serious` finding
+is fixed, and the minors that were correctness rather than tidiness with them.
+Each fix carries its citation in the code and a test named for the rule it pins.
+
+Two findings were **not** fixed and became corpus questions instead, in
+[`OPEN-questions.md`](OPEN-questions.md): the Dart `''` escape, and the §4.1
+Python anchor's disagreement with §3.7 (whose fix moves `closure_digest` and so
+needs the matching clause in §4.1).
+
+Three findings were **the verifier's, not the code's**, and are recorded as
+divergences rather than defects — the `ids=` u64 bound, the empty-`fn` refusal,
+and the `tool=` construction, the last of which is a corpus defect handled
+correctly and now filed as question 3.
 
 ## spine-collect — verdict: needs-work
 

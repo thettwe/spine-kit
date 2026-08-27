@@ -789,7 +789,15 @@ impl Src {
             Src::FileLine { path, line } => format!("{}:{line}", esc(path)),
             Src::Commit { sha } => format!("git:{sha}"),
             Src::MessageLine { sha, line } => format!("git:{sha}:msg:L{line}"),
-            Src::Trailer { sha, name } => format!("git:{sha}:trailer:{name}"),
+            // `esc` on the name too. DM §2.4 applies it to "every `src`", and
+            // the name is the one span of a citation that comes from a commit
+            // message rather than from this implementation's own vocabulary —
+            // so it is the one span that can carry a byte the artifact may not.
+            // Without it a trailer named `Spine-Café` put non-ASCII into a dump
+            // DM §17 item 4 requires to be ASCII throughout.
+            Src::Trailer { sha, name } => {
+                format!("git:{sha}:trailer:{}", esc(name.as_bytes()))
+            }
             Src::PatchId { sha } => format!("git:{sha}:patch-id"),
             Src::FileLineAt { sha, path, line } => format!("git:{sha}:{}:{line}", esc(path)),
             Src::ShippedFloor { version } => format!("spine:{version}:floor"),
@@ -819,7 +827,8 @@ impl Src {
             Src::FileLineAt { sha, line, .. } => sha_ok(sha) && line_ok(line),
             // A trailer name is a header name in the commit message; the
             // envelope's grammar owns its shape (DM §16), so only emptiness is
-            // refused here.
+            // refused here — the bytes are made safe by `esc` in `render`
+            // rather than by a second grammar here.
             Src::Trailer { sha, name } => sha_ok(sha) && !name.is_empty(),
         };
         if ok { Ok(()) } else { bad() }

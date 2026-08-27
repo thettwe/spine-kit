@@ -150,6 +150,17 @@ pub fn serialize(header: &Header, graph: &Graph) -> Result<Dump> {
     spine_manifest::grammar::check_repo(&header.repo)
         .map_err(|_| Refusal::new(Status::IdOutOfGrammar, format!("repo {:?}", header.repo)))?;
 
+    // DM §3.1 makes `trunk` "the resolved trunk **branch name**", and DM §4.2
+    // makes an unresolved one `not-installed` rather than an empty string — so
+    // an empty `trunk` is a header that reached the happy path without a value
+    // any reader can use.
+    if header.trunk.is_empty() {
+        return Err(Refusal::new(
+            Status::IdOutOfGrammar,
+            "header trunk is empty; DM §4.2 makes an unresolved trunk `not-installed`",
+        ));
+    }
+
     for (name, oid) in [("head", &header.head), ("trust_root", &header.trust_root)] {
         if let Some(oid) = oid
             && !is_oid(oid, header.object_format)

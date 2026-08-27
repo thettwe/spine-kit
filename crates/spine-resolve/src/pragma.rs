@@ -54,11 +54,40 @@ impl IntentPrefix {
 /// that was a second id domain.** … two implementations disagreeing on it
 /// disagree about whether `@verifies INT-42/AC-1` is an occurrence at all, hence
 /// about whether the file is a seed (§2.1.1), hence about the whole closure."
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct IntentId {
     prefix: IntentPrefix,
     number: u64,
     text: String,
+}
+
+/// **Numeric, and across both prefixes.**
+///
+/// `intent-doc.md` §3.1 makes G7's tie-break "the lower intent id holds the
+/// lease" a NUMERIC comparison, and `templates.md` §3.3 fixes one shared
+/// counter across `INT-` and `BUG-` — so the comparison is well defined and it
+/// is over the number alone.
+///
+/// A derived `Ord` compared `(prefix, number, text)` structurally, which made
+/// `INT-999 < BUG-051` because `Int` precedes `Bug` in the enum. That is a
+/// lease arbitration decided by the order two variants happen to be declared
+/// in, and it silently hands the lease to the wrong intent — the loser then
+/// takes a `class=protected` G7 wire it should not have.
+///
+/// `text` breaks a tie no shared counter can produce, so that two distinct ids
+/// are never `Equal` to a sort that must be total.
+impl Ord for IntentId {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.number
+            .cmp(&other.number)
+            .then_with(|| self.text.cmp(&other.text))
+    }
+}
+
+impl PartialOrd for IntentId {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
 }
 
 impl IntentId {
@@ -815,5 +844,26 @@ mod tests {
             scan_path("// @verifies INT-042/AC-1\n", "src/a.ts").len(),
             1
         );
+    }
+
+    /// ID §3.1 makes G7's "the lower intent id holds the lease" numeric, and
+    /// TM §3.3 puts `INT-` and `BUG-` on one shared counter — so the order is
+    /// over the number, not over which prefix was declared first.
+    #[test]
+    fn intent_ids_order_numerically_across_both_prefixes() {
+        let int999 = IntentId::parse("INT-999").unwrap();
+        let bug051 = IntentId::parse("BUG-051").unwrap();
+        assert!(
+            bug051 < int999,
+            "one shared counter: BUG-051 precedes INT-999"
+        );
+
+        let int042 = IntentId::parse("INT-042").unwrap();
+        assert!(int042 < bug051);
+
+        // And a sort is total, so equal numbers still order deterministically.
+        let mut ids = vec![int999.clone(), int042.clone(), bug051.clone()];
+        ids.sort();
+        assert_eq!(ids, vec![int042, bug051, int999]);
     }
 }
