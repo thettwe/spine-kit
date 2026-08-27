@@ -235,6 +235,23 @@ impl<'a> Lexer<'a> {
     /// Scan a quoted body and report `(content_end_exclusive, has_backslash,
     /// terminated)`. `quote` is the full delimiter (1 or 3 bytes).
     fn scan_quoted(&mut self, quote: &[u8]) -> (usize, bool, bool) {
+        self.scan_quoted_raw(quote, false)
+    }
+
+    /// `raw` suppresses backslash escaping.
+    ///
+    /// In a Dart raw literal (`r'…'`) a backslash is an ordinary byte, so
+    /// `r'a\'` is a complete literal ending in a backslash. Treating it as an
+    /// escape consumed the closing quote, ran the literal on past the newline,
+    /// and swallowed every statement until the next quote — an import on the
+    /// following line simply vanished, with no diagnostic. A fail-open lexer
+    /// bug, and branch-controlled: the branch chooses whether its file
+    /// contains one.
+    ///
+    /// `backslash` is still reported for a raw literal, because §3.4 rule 5's
+    /// "simple literal" test is about the *content*, and a raw literal
+    /// containing a backslash is still not simple.
+    fn scan_quoted_raw(&mut self, quote: &[u8], raw: bool) -> (usize, bool, bool) {
         let mut backslash = false;
         loop {
             if self.i >= self.src.len() {
@@ -242,6 +259,12 @@ impl<'a> Lexer<'a> {
             }
             if self.src[self.i] == b'\\' {
                 backslash = true;
+                if raw {
+                    // An ordinary byte: it neither escapes the next one nor
+                    // stops the closing quote from closing.
+                    self.i += 1;
+                    continue;
+                }
                 // An escape consumes the next byte, which is what stops `\"`
                 // from closing the literal.
                 self.i += core::cmp::min(2, self.src.len() - self.i);
@@ -573,12 +596,14 @@ impl Lexer<'_> {
         let quote: &[u8] = if triple { &quote_buf } else { &quote_buf[..1] };
         self.i += quote.len();
         let content_start = self.i;
-        let (content_end, backslash, _) = self.scan_quoted(quote);
+        let (content_end, backslash, _) = self.scan_quoted_raw(quote, raw);
         let body = &self.src[content_start..content_end];
-        let interpolated = body.windows(2).any(|w| {
-            w[0] == b'$' && (w[1] == b'{' || w[1].is_ascii_alphabetic() || w[1] == b'_')
-        });
-        let _ = raw;
+        // A raw literal interpolates nothing either: `r'$x'` is three
+        // characters, not a reference to `x`.
+        let interpolated = !raw
+            && body.windows(2).any(|w| {
+                w[0] == b'$' && (w[1] == b'{' || w[1].is_ascii_alphabetic() || w[1] == b'_')
+            });
         self.push(
             TokenKind::Str(StrInfo {
                 simple: !backslash && !interpolated,

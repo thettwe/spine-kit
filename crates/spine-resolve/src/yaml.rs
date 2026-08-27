@@ -75,14 +75,48 @@ struct Line {
     text: String,
 }
 
-/// A `#` opens a comment only at the start of a line or after whitespace, which
-/// is YAML's own rule and is what keeps a `#` inside a plain scalar (a URL
-/// fragment, a colour) from truncating it.
+/// A `#` opens a comment only at the start of a line or after whitespace **and
+/// outside a quoted scalar**, which is YAML's own rule.
+///
+/// The whitespace clause alone is what keeps a `#` inside a *plain* scalar (a
+/// URL fragment, a colour) from truncating the line. The quote clause is what
+/// keeps a `#` inside a quoted one from doing the same — and it was missing
+/// until 2026-08-28, with a consequence far out of proportion to the bug:
+/// `description: 'uses # hash'` truncated to an unbalanced quote, `unquote`
+/// refused it, and `pubspec.yaml` came back `pubspec-not-declarative`. Under IR
+/// §3.8's language level that makes **every Dart file in the repository
+/// contribute no edges**, so one apostrophe-free comment character in a
+/// pubspec blocked every Dart landing there.
+///
+/// IR §6.3 step 2 admits "plain or single/double-quoted scalars only" and lists
+/// five excluded constructs; a `#` inside quotes is on neither list, and it is
+/// not a comment in YAML.
 fn strip_comment(line: &str) -> &str {
     let bytes = line.as_bytes();
-    for (i, b) in bytes.iter().enumerate() {
-        if *b == b'#' && (i == 0 || bytes[i - 1] == b' ' || bytes[i - 1] == b'\t') {
-            return &line[..i];
+    let mut quote: Option<u8> = None;
+    let mut i = 0;
+    while i < bytes.len() {
+        let b = bytes[i];
+        match quote {
+            // Inside a double-quoted scalar `\` escapes the next byte, so a
+            // `\"` does not close it. Inside a single-quoted scalar YAML has
+            // no backslash escape at all — `''` is the only escape — so a
+            // backslash there is an ordinary byte.
+            Some(b'"') if b == b'\\' => i += 2,
+            Some(q) if b == q => {
+                quote = None;
+                i += 1;
+            }
+            Some(_) => i += 1,
+            None => {
+                if b == b'#' && (i == 0 || bytes[i - 1] == b' ' || bytes[i - 1] == b'\t') {
+                    return &line[..i];
+                }
+                if b == b'"' || b == b'\'' {
+                    quote = Some(b);
+                }
+                i += 1;
+            }
         }
     }
     line
@@ -293,5 +327,66 @@ mod tests {
     fn a_key_declared_with_nothing_under_it_is_empty_and_not_a_scalar() {
         let yaml = parse("dev_dependencies:\nname: a\n").unwrap();
         assert_eq!(yaml.get("dev_dependencies"), Some(&Yaml::Empty));
+    }
+
+    /// A `#` inside a quoted scalar is not a comment, and the consequence of
+    /// treating it as one was not local: the truncated line left an unbalanced
+    /// quote, `unquote` refused, `pubspec.yaml` read as
+    /// `pubspec-not-declarative`, and under IR §3.8's language level **every**
+    /// Dart file in the repository then contributed no edges.
+    #[test]
+    fn a_hash_inside_a_quoted_scalar_is_not_a_comment() {
+        for (source, key, want) in [
+            ("name: \"a # b\"\n", "name", "a # b"),
+            ("description: 'uses # hash'\n", "description", "uses # hash"),
+            ("name: \"trailing\" # a real comment\n", "name", "trailing"),
+        ] {
+            let parsed = parse(source)
+                .unwrap_or_else(|| panic!("{source:?} must parse"));
+            assert_eq!(
+                parsed.get(key).and_then(Yaml::as_scalar),
+                Some(want),
+                "{source:?}"
+            );
+        }
+    }
+
+    /// And a `#` in a *plain* scalar is still not a comment either — the rule
+    /// that was already right stays right.
+    #[test]
+    fn a_hash_inside_a_plain_scalar_is_still_not_a_comment() {
+        let parsed = parse("url: https://example.invalid/a#frag\n").unwrap();
+        assert_eq!(
+            parsed.get("url").and_then(Yaml::as_scalar),
+            Some("https://example.invalid/a#frag")
+        );
+    }
+
+    /// A doubled single quote (`'it''s'`) is YAML's own escape and this
+    /// subset refuses it — deliberately, at `unquote`, "cheaper than deciding
+    /// which of YAML's two escape dialects applies". `strip_comment` handles it
+    /// correctly regardless, so the two decisions stay independent: a `#` after
+    /// a doubled quote is still inside the scalar.
+    ///
+    /// Whether the refusal is right is a corpus question, not this function's:
+    /// IR §6.3 step 2's excluded list does not name it either way, and the
+    /// consequence — one apostrophe in a `description:` making every Dart
+    /// landing impossible under §3.8 — is filed in
+    /// `.build-notes/OPEN-questions.md`.
+    #[test]
+    fn a_doubled_quote_leaves_the_scalar_open_for_strip_comment() {
+        assert_eq!(
+            strip_comment("name: 'it''s # fine'"),
+            "name: 'it''s # fine'"
+        );
+    }
+
+    /// A comment after a quoted scalar still opens, so the fix did not close
+    /// the case it was written around.
+    #[test]
+    fn a_comment_after_a_closed_quote_still_opens() {
+        assert_eq!(strip_comment("name: \"a\" # gone"), "name: \"a\" ");
+        assert_eq!(strip_comment("# whole line"), "");
+        assert_eq!(strip_comment("bare#notacomment"), "bare#notacomment");
     }
 }

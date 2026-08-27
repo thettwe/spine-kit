@@ -228,6 +228,9 @@ fn union_of(
 ) -> Disposition {
     let mut targets: Vec<String> = Vec::new();
     let mut external = false;
+    // Branches that resolved to nothing. Kept so the site can report them
+    // without discarding the branches that did resolve.
+    let mut unresolved: Vec<Unresolvable> = Vec::new();
     for uri in uris {
         // IR §3.4 rule 5 and §6.7's site-level `non-simple-literal`.
         let Some(spec) = uri.simple_literal(source) else {
@@ -242,13 +245,39 @@ fn union_of(
                 }
             }
             Disposition::External => external = true,
-            // A branch this resolver cannot read makes the whole site
-            // unresolvable: the site has one disposition (IR §3.2), and the
-            // fail-closed direction is to report the branch it could not read.
-            other => return other,
+            // A branch that resolved to nothing does not discard the branches
+            // that did.
+            //
+            // This returned `other` until 2026-08-28, on the reading that "the
+            // site has one disposition" and reporting the unread branch is
+            // fail-closed. It is the opposite. IR §3.2: "a site may yield
+            // several `repo` targets … **It is never a reason to call the site
+            // `unresolvable`**", and §3.7's union rule has every branch
+            // contribute. Case D4 is exactly this shape — a conditional import
+            // whose stub resolves and whose `dart.library.io` branch does not.
+            //
+            // What the old reading lost was an *edge*: a file the resolver
+            // could locate went unfrozen, and outside `H` a missing edge is
+            // only the `unresolvable-import-outside-harness` counter, so
+            // nothing reported the loss. A dropped freeze target is the silent
+            // direction; naming the branch is the loud one, and the loud one is
+            // available without dropping anything — the unresolved branches are
+            // recorded and the resolved targets still stand.
+            Disposition::Unresolvable(reason) => unresolved.push(reason),
+            // Dart has no type-only import; `resolve` never returns it here,
+            // and a wildcard would hide it if that ever changed.
+            Disposition::TypeOnly => {
+                unreachable!("dart::resolve does not produce a type-only disposition")
+            }
         }
     }
     if targets.is_empty() {
+        // Only when NO branch resolved does the site take a branch's reason —
+        // and then the first, so the answer does not depend on branch order
+        // beyond the source's own.
+        if let Some(reason) = unresolved.first() {
+            return Disposition::Unresolvable(*reason);
+        }
         if external {
             Disposition::External
         } else {
@@ -780,5 +809,70 @@ mod tests {
             only("import '../../x.dart';\n", "lib/t.dart", &tree, &rc),
             Disposition::Unresolvable(Unresolvable::RelativeEscapesRoot)
         );
+    }
+
+    /// IR §3.2: "a site may yield several `repo` targets … **It is never a
+    /// reason to call the site `unresolvable`**." A conditional import whose
+    /// stub resolves and whose platform branch does not keeps the stub.
+    ///
+    /// The old reading returned the failing branch's reason and dropped the
+    /// resolved target — losing a freeze, silently, because outside `H` a
+    /// missing edge is only a counter.
+    #[test]
+    fn a_conditional_import_keeps_the_branches_that_resolved() {
+        let tree = MapTree::new([
+            ("pubspec.yaml", SELF_PUBSPEC),
+            ("lib/stub.dart", ""),
+            ("lib/main.dart", ""),
+        ]);
+        let rc = rc(&tree).unwrap();
+        let source = "import 'stub.dart' if (dart.library.io) 'io.dart';\n";
+        let found = sites(source, "lib/main.dart", &tree, &rc);
+
+        assert_eq!(found.len(), 1, "one site, whatever its branch count");
+        match &found[0].disposition {
+            Disposition::Repo(targets) => {
+                assert!(
+                    targets.iter().any(|t| t == "lib/stub.dart"),
+                    "the branch that resolved must still be frozen: {targets:?}"
+                );
+            }
+            other => panic!("expected the resolved branch to survive, got {other:?}"),
+        }
+    }
+
+    /// And when NO branch resolves, the site is still unresolvable — the fix
+    /// did not turn a wholly unreadable site into a silent pass.
+    #[test]
+    fn a_conditional_import_whose_every_branch_fails_is_still_unresolvable() {
+        let tree = MapTree::new([("pubspec.yaml", SELF_PUBSPEC), ("lib/main.dart", "")]);
+        let rc = rc(&tree).unwrap();
+        let source = "import 'gone.dart' if (dart.library.io) 'also_gone.dart';\n";
+        let found = sites(source, "lib/main.dart", &tree, &rc);
+        assert!(matches!(
+            found[0].disposition,
+            Disposition::Unresolvable(_)
+        ));
+    }
+
+    /// A Dart raw literal ending in a backslash — `r'a\\'` — is complete. Read
+    /// as an escape it consumed the closing quote, ran past the newline and
+    /// swallowed the following statement whole, with no diagnostic.
+    #[test]
+    fn a_raw_literal_ending_in_a_backslash_does_not_swallow_the_next_line() {
+        let tree = MapTree::new([
+            ("pubspec.yaml", SELF_PUBSPEC),
+            ("lib/x.dart", ""),
+            ("lib/main.dart", ""),
+        ]);
+        let rc = rc(&tree).unwrap();
+        let source = "var s = r'a\\';\nimport 'x.dart';\n";
+        let found = sites(source, "lib/main.dart", &tree, &rc);
+        assert_eq!(
+            found.len(),
+            1,
+            "the import on the next line must survive the raw literal"
+        );
+        assert_eq!(found[0].disposition, repo("lib/x.dart"));
     }
 }

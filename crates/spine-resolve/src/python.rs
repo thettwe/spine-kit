@@ -119,15 +119,74 @@ fn statements(tokens: &[Token]) -> Vec<&[Token]> {
 /// `from` that is the **first token of a logical line or the first token after
 /// a `;`**. Both are keywords, so no further disambiguation is needed."
 ///
-/// **DEFECT (IR §4.1), reported rather than closed.** That anchor does not
-/// reach a compound one-liner: in `if True: import oracle` the `import` is
-/// neither the first token of its logical line nor the first after a `;`, so
-/// this resolver — conforming to §4.1 — draws no edge and the module is not
-/// frozen. §3.4 rule 7 ("Nesting is irrelevant … a rule that ignored one would
-/// be a rule an oracle could hide behind") is about *scope* and does not repair
-/// the *position* rule. Widening the anchor unilaterally is worse than the
-/// hole: it would enlarge the closure, change `closure_digest`, and make this
-/// implementation reject a conforming one's approval.
+/// The suite of a compound statement written on one line, if this clause is
+/// one.
+///
+/// Returns the tokens after the header's `:` — the `:` at bracket depth 0 that
+/// follows one of Python's compound keywords. Bracket depth is what keeps a
+/// dict literal, a slice, an annotation and a `lambda` from reading as a
+/// header; the keyword check is what keeps an annotated assignment
+/// (`x: int = 1`) from doing the same.
+fn compound_suite<'a>(source: &str, clause: &'a [Token]) -> Option<&'a [Token]> {
+    const COMPOUND: [&str; 11] = [
+        "if", "elif", "else", "for", "while", "try", "except", "finally", "with", "def", "class",
+    ];
+    let first = clause.first()?;
+    let is_compound = COMPOUND.iter().any(|k| first.is_word(source, k))
+        // `async for` / `async with` / `async def`.
+        || (first.is_word(source, "async")
+            && clause
+                .get(1)
+                .is_some_and(|t| ["for", "with", "def"].iter().any(|k| t.is_word(source, k))));
+    if !is_compound {
+        return None;
+    }
+
+    let mut depth = 0i32;
+    for (i, token) in clause.iter().enumerate() {
+        if token.is_punct(source, b'(') || token.is_punct(source, b'[') || token.is_punct(source, b'{') {
+            depth += 1;
+        } else if token.is_punct(source, b')') || token.is_punct(source, b']') || token.is_punct(source, b'}') {
+            depth -= 1;
+        } else if depth == 0 && token.is_punct(source, b':') {
+            let suite = &clause[i + 1..];
+            // A header with nothing after its `:` is the ordinary multi-line
+            // form; its suite is on the following lines and is a statement in
+            // its own right, already scanned.
+            return (!suite.is_empty()).then_some(suite);
+        }
+    }
+    None
+}
+
+/// **A compound statement's suite is scanned too, and §4.1's anchor does not
+/// say so.** In `try: import oracle` / `if True: import oracle` the `import`
+/// is neither the first token of its logical line nor the first after a `;`,
+/// so the anchor as written draws no site and the module is never frozen.
+///
+/// This was left as a reported defect and is now closed in §3.7's direction,
+/// because §3.7 settles it and does so by name:
+///
+/// > Every one of the four languages has at least one construct whose active
+/// > branch is chosen by something outside the tree — Swift's `#if`, Dart's
+/// > `import … if (…)`, TypeScript's environment-dependent `exports`
+/// > conditions, **Python's `try: import … except ImportError:`**.
+/// >
+/// > **The rule is the union.** Every branch of every conditional construct
+/// > contributes its import sites, and all of them are resolved. … dropping a
+/// > branch is how an [oracle hides].
+///
+/// So §4.1's anchor is a lexical rule written for the ordinary case that does
+/// not reach the compound form, while §3.7 states the requirement the closure
+/// must meet. Between a section that names the construct and a section that
+/// merely fails to reach it, the one that names it governs — and the direction
+/// matters: the anchor's reading leaves an oracle a one-line hiding place in
+/// the freeze closure, which is the failure that cost Kotlin its place in v1.
+///
+/// **This moves `closure_digest` for a repository containing one**, and that
+/// is filed in `.build-notes/OPEN-questions.md`: §4.1's anchor needs the
+/// matching clause so two implementations reading it alone agree with two
+/// reading §3.7.
 fn statement_sites(
     source: &str,
     path: &str,
@@ -139,6 +198,13 @@ fn statement_sites(
         let Some(first) = clause.first() else {
             continue;
         };
+        // A compound statement header — `if …:`, `try:`, `except X:`, `for …:`
+        // — whose suite is on the same line. Everything after the header's `:`
+        // is a statement list in its own right, so it is scanned as one.
+        if let Some(suite) = compound_suite(source, clause) {
+            out.extend(statement_sites(source, path, tree, suite));
+            continue;
+        }
         if first.is_word(source, "import") {
             out.extend(parse_plain_import(source, tree, clause));
         } else if first.is_word(source, "from") {
@@ -805,5 +871,66 @@ mod tests {
         // `lib/` is not a root, however `pyproject.toml` spells it.
         assert_eq!(roots(&tree), [""]);
         assert_eq!(only("import pkg.mod\n", "t.py", &tree), Disposition::External);
+    }
+
+    /// IR §3.7 names `try: import … except ImportError:` as a conditional
+    /// construct whose every branch contributes, and gives the reason:
+    /// "dropping a branch is how an [oracle hides]". §4.1's anchor does not
+    /// reach the one-line form; §3.7 governs, and this is the test of it.
+    #[test]
+    fn a_compound_one_liner_draws_its_import_site() {
+        let tree = MapTree::new([("oracle.py", ""), ("a.py", "")]);
+        for source in [
+            "try: import oracle\nexcept ImportError: pass\n",
+            "if True: import oracle\n",
+            "for x in y: import oracle\n",
+            "while True: import oracle\n",
+            "with open(f): import oracle\n",
+            "else: import oracle\n",
+            "async def f(): import oracle\n",
+        ] {
+            let found = sites(source, "a.py", &tree);
+            assert_eq!(
+                found.len(),
+                1,
+                "{source:?} must draw a site — an oracle must have nowhere to hide"
+            );
+            assert_eq!(
+                found[0].disposition,
+                Disposition::Repo(vec!["oracle.py".to_string()]),
+                "{source:?}"
+            );
+        }
+    }
+
+    /// And the shapes a `:` appears in that are NOT compound headers still draw
+    /// nothing, so the widening did not turn punctuation into an anchor.
+    #[test]
+    fn a_colon_that_does_not_open_a_suite_is_not_an_anchor() {
+        let tree = MapTree::new([("oracle.py", ""), ("a.py", "")]);
+        for source in [
+            // An annotated assignment.
+            "x: int = 1\n",
+            // A dict literal whose value mentions the word.
+            "d = {'import': 'oracle'}\n",
+            // A slice.
+            "s = xs[1:2]\n",
+            // A lambda.
+            "f = lambda x: x\n",
+        ] {
+            assert!(
+                sites(source, "a.py", &tree).is_empty(),
+                "{source:?} draws no site"
+            );
+        }
+    }
+
+    /// A header with nothing after its `:` is the ordinary multi-line form and
+    /// is unaffected — its suite is already a statement of its own.
+    #[test]
+    fn a_multi_line_compound_statement_is_unchanged() {
+        let tree = MapTree::new([("oracle.py", ""), ("a.py", "")]);
+        let found = sites("try:\n    import oracle\nexcept ImportError:\n    pass\n", "a.py", &tree);
+        assert_eq!(found.len(), 1);
     }
 }

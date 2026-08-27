@@ -252,8 +252,32 @@ fn construct_end(source: &str, tokens: &[Token], i: usize) -> usize {
         match byte {
             b'(' | b'[' | b'{' => depth += 1,
             b')' | b']' => depth -= 1,
-            b'}' if depth > 0 => depth -= 1,
-            b';' | b'}' if depth <= 0 => return k,
+            b'}' if depth > 1 => depth -= 1,
+            // The `}` that closes the construct's own outermost brace.
+            //
+            // Depth alone cannot decide here, and reading it as "keep going"
+            // was a fail-open: `export enum E { A, B }` has no trailing `;`, so
+            // the anchor ran past its own end and terminated on the NEXT
+            // statement's `;` — stealing that statement's specifier and
+            // resolving it **without** its modifiers. `export enum E { A, B }`
+            // followed by `import type { X } from './a';` produced a second,
+            // spurious site that froze `a.ts`, which IR §3.6 says a type-only
+            // import must never do.
+            //
+            // What separates the two shapes is the token after the brace:
+            // `export { X } from './a';` continues, because `from` is where its
+            // specifier lives; `export enum E { … }` and `export function f()
+            // {}` end there, because a braced declaration takes no `;`.
+            b'}' => {
+                depth -= 1;
+                let continues = tokens.get(k + 1).is_some_and(|next| {
+                    next.kind == TokenKind::Word && &source[next.start..next.end] == "from"
+                });
+                if !continues {
+                    return k;
+                }
+            }
+            b';' if depth <= 0 => return k,
             _ => {}
         }
     }
@@ -1091,6 +1115,57 @@ mod tests {
                 &Rc::default()
             ),
             repo("vitest.setup.ts")
+        );
+    }
+
+    /// IR §5.1 bounds an export clause at "the next `;` or `}` at the same
+    /// bracket depth", and IR §3.6 makes a type-only import contribute no edge
+    /// and never freeze its target.
+    ///
+    /// A braced export declaration takes no trailing `;`, so an anchor that
+    /// kept scanning past its own `}` terminated on the NEXT statement's `;` —
+    /// producing a second site that resolved that statement's specifier
+    /// **without** its `type` modifier, and froze a file §3.6 forbids freezing.
+    #[test]
+    fn a_braced_export_declaration_does_not_steal_the_next_statements_specifier() {
+        let tree = MapTree::new([
+            ("package.json", "{}"),
+            ("src/a.ts", ""),
+            ("src/main.ts", ""),
+        ]);
+        for source in [
+            "export enum E { A, B }\nimport type { X } from './a';\n",
+            "export function f() {}\nimport type { X } from './a';\n",
+            "export interface I { a: 1 }\nimport type { X } from './a';\n",
+        ] {
+            let found = sites(source, "src/main.ts", &tree, &rc(&tree).unwrap());
+            assert_eq!(
+                found.len(),
+                1,
+                "one site — the type-only import — for {source:?}, got {found:?}"
+            );
+            assert_eq!(
+                found[0].disposition,
+                Disposition::TypeOnly,
+                "and it keeps its modifier: {source:?}"
+            );
+        }
+    }
+
+    /// And a re-export still reaches its specifier, so the fix did not close
+    /// the form it was distinguishing from.
+    #[test]
+    fn a_re_export_still_reads_the_specifier_after_its_closing_brace() {
+        let tree = MapTree::new([
+            ("package.json", "{}"),
+            ("src/a.ts", ""),
+            ("src/main.ts", ""),
+        ]);
+        let found = sites("export { X } from './a';\n", "src/main.ts", &tree, &rc(&tree).unwrap());
+        assert_eq!(found.len(), 1);
+        assert_eq!(
+            found[0].disposition,
+            Disposition::Repo(vec!["src/a.ts".to_string()])
         );
     }
 }
