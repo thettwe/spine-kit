@@ -174,10 +174,11 @@ impl Plan {
 /// It does **not** fall back on a default host, a tag in place of a commit, an
 /// empty string, or a rendered file with the token left in."
 pub fn development_build_plan(desired: &[Desired]) -> Plan {
-    Plan {
-        rows: desired
-            .iter()
-            .map(|d| PlanRow {
+    // Sorted like every other plan: a plan a human reads should not change
+    // order with the reason it refused.
+    let mut rows: Vec<PlanRow> = desired
+        .iter()
+        .map(|d| PlanRow {
                 path: d.path.clone(),
                 owner: d.owner,
                 template: Some(d.template.clone()),
@@ -185,11 +186,12 @@ pub fn development_build_plan(desired: &[Desired]) -> Plan {
                 manifest_blob: None,
                 render_blob: None,
                 state: State::Missing,
-                action: Action::Refuse,
-                reason: Some(RefuseReason::NoReleaseManifest),
-            })
-            .collect(),
-    }
+            action: Action::Refuse,
+            reason: Some(RefuseReason::NoReleaseManifest),
+        })
+        .collect();
+    rows.sort_by(|a, b| a.path.cmp(&b.path));
+    Plan { rows }
 }
 
 /// Compute the plan.

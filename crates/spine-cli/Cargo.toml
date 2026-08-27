@@ -13,8 +13,8 @@ path = "src/main.rs"
 [dependencies]
 spine-canon = { path = "../spine-canon" }
 spine-manifest = { path = "../spine-manifest" }
-spine-collect = { path = "../spine-collect" }
-spine-graph = { path = "../spine-graph" }
+spine-init = { path = "../spine-init" }
+spine-template = { path = "../spine-template" }
 
 [lints]
 workspace = true
