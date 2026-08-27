@@ -11,6 +11,10 @@
 
 pub mod constitution;
 pub mod harness;
+pub mod release;
 pub mod scaffold;
+pub mod substitute;
 
 pub use constitution::Seed;
+pub use release::{NoReleaseManifest, ReleaseManifest};
+pub use substitute::{RenderError, Table};

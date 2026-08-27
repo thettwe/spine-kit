@@ -10,11 +10,13 @@
 //! `owner` set never change at any `manifest_version` — and everything else is
 //! opaque data a binary preserves without understanding (PB §6.7, PB §11).
 
+pub mod artifacts;
 pub mod grammar;
 pub mod keyring;
 pub mod schema;
 pub mod status;
 
+pub use artifacts::{ArtifactList, host_target, target_for};
 pub use keyring::{Keyring, Lint, Mode};
 pub use schema::{FileRecord, Isolation, Manifest, Owner};
 pub use status::{Refusal, Status};
