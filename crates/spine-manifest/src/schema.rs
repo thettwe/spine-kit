@@ -330,7 +330,7 @@ impl Manifest {
             .iter()
             .map(|record| {
                 let path = record.get("path").and_then(Value::as_str).expect("validated");
-                let (file_path, region) = grammar::split_region(path).expect("validated");
+                let (file_path, region) = grammar::split_region(path);
                 FileRecord {
                     path: path.to_string(),
                     file_path: file_path.to_string(),
@@ -601,7 +601,7 @@ impl Manifest {
                 .and_then(Value::as_str)
                 .ok_or_else(|| Refusal::new(Status::FrozenMemberMissing, "files[].path"))?;
 
-            let (file_path, region) = grammar::split_region(path)?;
+            let (file_path, region) = grammar::split_region(path);
             grammar::check_repo_path(file_path, &format!("files[].path {path:?}"))?;
             if let Some(key) = region {
                 grammar::check_region_key(key)?;

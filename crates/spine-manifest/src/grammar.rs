@@ -127,21 +127,37 @@ pub fn check_region_key(s: &str) -> Result<(), Refusal> {
 /// A `files[].path`: an `esc`-encoded repository path, optionally followed by
 /// `#` and a region key (MF §3.5, §3.7).
 ///
-/// Splitting on `#` is why `path-hash-ambiguous` exists: a repository path may
-/// legitimately contain a `#`, so a path with more than one is not decidable
-/// between "a file called `a#b`" and "region `b` of file `a`".
-pub fn split_region(path: &str) -> Result<(&str, Option<&str>), Refusal> {
-    match path.split('#').count() {
-        1 => Ok((path, None)),
-        2 => {
-            let (file, key) = path.split_once('#').expect("exactly one '#'");
-            Ok((file, Some(key)))
-        }
-        _ => Err(Refusal::new(
-            Status::PathHashAmbiguous,
-            format!("files[].path {path:?}"),
-        )),
+/// MF §3.7: "The path is split at the **last** `#`: everything before is the
+/// file path, everything after is the region key." **Total** — it never
+/// refuses, because a manifest already on disk must be readable by any binary
+/// that meets it.
+///
+/// The refusal lives one layer up instead: "A repository file whose own name
+/// contains `#` therefore cannot be spine-managed; **`init` refuses to record
+/// one** (`path-hash-ambiguous`). This is the only ambiguity the `#` form
+/// introduces and it is cheaper to refuse than to escape." See
+/// [`check_recordable_path`].
+pub fn split_region(path: &str) -> (&str, Option<&str>) {
+    match path.rsplit_once('#') {
+        Some((file, key)) => (file, Some(key)),
+        None => (path, None),
     }
+}
+
+/// The init-time refusal MF §3.7 assigns to `path-hash-ambiguous`: a host file
+/// whose *own name* contains `#` cannot be spine-managed.
+///
+/// Applied when `init` decides what to record, never when a manifest is read —
+/// which is why [`split_region`] is total.
+pub fn check_recordable_path(path: &str) -> Result<(), Refusal> {
+    let (file, _key) = split_region(path);
+    if file.contains('#') {
+        return Err(Refusal::new(
+            Status::PathHashAmbiguous,
+            format!("host file {file:?} contains '#'"),
+        ));
+    }
+    Ok(())
 }
 
 /// MF §3.6: `<template name>@<integer >= 1>`, the name matching
@@ -311,16 +327,38 @@ mod tests {
         }
     }
 
+    /// MF §3.7: the split is at the **last** `#` and is total — a manifest
+    /// already on disk must be readable by any binary that meets it.
     #[test]
-    fn a_second_hash_is_ambiguous_rather_than_guessed() {
-        assert_eq!(split_region("AGENTS.md").unwrap(), ("AGENTS.md", None));
+    fn the_region_split_is_total_and_takes_the_last_hash() {
+        assert_eq!(split_region("AGENTS.md"), ("AGENTS.md", None));
+        assert_eq!(split_region("AGENTS.md#spine"), ("AGENTS.md", Some("spine")));
+        assert_eq!(split_region("a#b#c"), ("a#b", Some("c")));
+        assert_eq!(split_region("#k"), ("", Some("k")));
+    }
+
+    /// The refusal lives at init instead: "A repository file whose own name
+    /// contains `#` therefore cannot be spine-managed; `init` refuses to record
+    /// one." Reading is total; writing is not.
+    #[test]
+    fn init_refuses_to_record_a_host_file_whose_name_contains_a_hash() {
+        assert!(check_recordable_path("AGENTS.md").is_ok());
+        assert!(check_recordable_path("AGENTS.md#spine").is_ok());
+        // Two or more `#`: the split leaves a host file that still carries one.
         assert_eq!(
-            split_region("AGENTS.md#spine").unwrap(),
-            ("AGENTS.md", Some("spine"))
-        );
-        assert_eq!(
-            split_region("a#b#c").unwrap_err().status,
+            check_recordable_path("a#b#c").unwrap_err().status,
             Status::PathHashAmbiguous
+        );
+
+        // One `#` in a *file* name is not this refusal, and pretending it were
+        // would report the wrong token. `weird#name.md` splits to the host file
+        // `weird` and the region key `name.md`, and it is the **region-key
+        // grammar** that refuses it — `region-name-out-of-grammar`, a distinct
+        // entry in §3.11's closed list that a reviewer's `wires=` names.
+        assert!(check_recordable_path("weird#name.md").is_ok());
+        assert_eq!(
+            check_region_key("name.md").unwrap_err().status,
+            Status::RegionNameOutOfGrammar
         );
     }
 

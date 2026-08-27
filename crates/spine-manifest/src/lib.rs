@@ -13,10 +13,12 @@
 pub mod artifacts;
 pub mod grammar;
 pub mod keyring;
+pub mod region;
 pub mod schema;
 pub mod status;
 
 pub use artifacts::{ArtifactList, host_target, target_for};
 pub use keyring::{Keyring, Lint, Mode};
+pub use region::{MarkerStyle, Region, RegionError};
 pub use schema::{FileRecord, Isolation, Manifest, Owner};
 pub use status::{Refusal, Status};
