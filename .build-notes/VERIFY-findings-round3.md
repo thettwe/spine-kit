@@ -169,9 +169,26 @@ ever used to ask the wrong question.
 - **S8** fixed. The manifest goes through staging like every other render, so
   it moves by atomic rename and is parse-validated before it lands.
 - **S9** fixed. PB §6.7 step 6's graph-cache delete runs.
-- **S10** stands: the CLI still refuses `--abort`, `--rollback`, `--uninstall`
-  and ignores `--merge`/`--adopt`/`--force`. These fixes are what makes wiring
-  them safe.
+- **S10** fixed. All six flags are wired: `--merge`, `--adopt` and `--force`
+  call `resolve`, and `--abort`, `--uninstall` and `--rollback` call their
+  libraries. Each was exercised end to end against the real binary. Two things
+  turned up in the wiring that no review round reached, both in the CLI's own
+  manifest builder:
+  - **`files[]` was built from what the run wrote**, so a skipped path dropped
+    out — and an idempotent re-run skips everything, which emptied `files[]`
+    completely. Every path then reads `foreign` on the next run, and
+    `spine-owned` + foreign is a refusal.
+  - **`owner` came from a hard-coded table**, so a reclassification had nowhere
+    to land *and* a class an earlier run recorded was overwritten on every
+    re-run — spine resuming ownership of a file it was told to stop writing.
+  Also fixed while wiring: `abort` reported the paths it *visited* rather than
+  the ones it changed, so `--abort` on a clean tree listed every path as
+  restored and never said "nothing to abort".
+
+  Still unwired, and the next thing: no `Spine-Upgrade` line is constructed
+  anywhere outside tests, so no lifecycle **landing** exists — `spine/upgrade-<version>`
+  is never created and `forced=`, `to=none`, `from=none since=` are never
+  written. That is PB §6.7 step 5 and belongs with `spine check --land`.
 - **M2** fixed: `--force` must override an actual refusal, not merely name a
   path in `P` — the check its own error text already described.
 - M1, M3, M4, M5, M6 stand; none is reachable from v1's flows and each is

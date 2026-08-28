@@ -53,9 +53,22 @@ impl Scratch {
     fn init(&self, extra: &[&str]) -> (i32, String) {
         let mut args = vec!["init", "--ci", "generic", "--identity", "alice@example.com"];
         args.extend_from_slice(extra);
+        self.spine(&args)
+    }
+
+    /// `spine init <flags>` with no render flags at all — PB §6.7's lifecycle
+    /// paths are exempt from the version gate *and* from rendering, so a run
+    /// that supplied `--ci` and `--identity` would not be testing that.
+    fn init_raw(&self, extra: &[&str]) -> (i32, String) {
+        let mut args = vec!["init"];
+        args.extend_from_slice(extra);
+        self.spine(&args)
+    }
+
+    fn spine(&self, args: &[&str]) -> (i32, String) {
         let out = Command::new(spine())
             .current_dir(&self.0)
-            .args(&args)
+            .args(args)
             .output()
             .expect("spine runs");
         let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
@@ -685,4 +698,88 @@ fn force_overwrites_and_merge_reclassifies() {
         "spine-owned",
         "--force reclassifies nothing"
     );
+}
+
+/// PB §6.7: "`spine init --uninstall` removes **every** `spine-owned` path …
+/// leaves `user-owned` and `user-modified` files in place (reported)", and
+/// MF §6.8's outright checks: every managed region is marker-free, and the
+/// manifest is gone.
+#[test]
+fn uninstall_leaves_the_humans_files_and_takes_spines() {
+    let Some(scratch) = Scratch::new("uninstall") else {
+        return;
+    };
+    if !available() || build_kind(&scratch) != BuildKind::Release {
+        return;
+    }
+    assert_eq!(scratch.init(&[]).0, 0);
+    scratch.commit("spine init");
+
+    let (code, text) = scratch.init_raw(&["--uninstall"]);
+    assert_eq!(code, 0, "{text}");
+
+    // MF §6.8: "every managed region listed in `M_B` is marker-free in `T`".
+    for host in ["AGENTS.md", ".gitignore", ".gitattributes"] {
+        assert!(
+            !scratch.read(host).contains("spine:begin"),
+            "{host} still carries a marker"
+        );
+    }
+    // "an uninstall leaves the human's file readable" — prose above the block
+    // and the file's own content survive.
+    assert!(scratch.read("AGENTS.md").contains("Hand-written."));
+    assert!(scratch.read(".gitignore").contains("node_modules/"));
+    // `user-owned`: "never touched again".
+    assert!(scratch.0.join("CONSTITUTION.md").exists());
+    // `spine-owned`, and the manifest.
+    assert!(!scratch.0.join(".spine/ci.sh").exists());
+    assert!(!scratch.0.join(".spine/manifest.json").exists());
+}
+
+/// PB §6.7: "**`--abort`** … restores every `spine-owned` path from HEAD and
+/// deletes the staging directory."
+///
+/// With nothing pending and nothing diverged there is nothing to abort, and
+/// saying so beats listing every path as "restored" — which it did, because it
+/// reported the paths it *visited* rather than the ones it changed.
+#[test]
+fn abort_on_a_clean_tree_reports_that_there_is_nothing_to_abort() {
+    let Some(scratch) = Scratch::new("abort-clean") else {
+        return;
+    };
+    if !available() || build_kind(&scratch) != BuildKind::Release {
+        return;
+    }
+    assert_eq!(scratch.init(&[]).0, 0);
+    scratch.commit("spine init");
+
+    let (code, text) = scratch.init_raw(&["--abort"]);
+    assert_eq!(code, 0, "{text}");
+    assert!(text.contains("nothing to abort"), "{text}");
+
+    // And it does restore a real divergence.
+    std::fs::write(scratch.0.join(".spine/ci.sh"), "clobbered\n").unwrap();
+    let (code, text) = scratch.init_raw(&["--abort"]);
+    assert_eq!(code, 0, "{text}");
+    assert!(text.contains("restore .spine/ci.sh"), "{text}");
+    assert_ne!(scratch.read(".spine/ci.sh"), "clobbered\n");
+}
+
+/// MF §6.7 step 1: the target "holds a well-formed manifest". Rolling back the
+/// landing that *installed* spine reaches an ancestor from before the trust
+/// root, and PB §6.7 has a different name for undoing that one.
+#[test]
+fn rolling_back_the_install_says_to_uninstall_instead() {
+    let Some(scratch) = Scratch::new("rollback-install") else {
+        return;
+    };
+    if !available() || build_kind(&scratch) != BuildKind::Release {
+        return;
+    }
+    assert_eq!(scratch.init(&[]).0, 0);
+    scratch.commit("spine init");
+
+    let (code, text) = scratch.init_raw(&["--rollback", "--dry-run"]);
+    assert_eq!(code, 2, "{text}");
+    assert!(text.contains("--uninstall"), "{text}");
 }

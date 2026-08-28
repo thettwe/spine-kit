@@ -111,7 +111,20 @@ pub fn abort(repo: &Repo) -> Result<Aborted, AbortError> {
         // restores the region, and the host is the only thing `git checkout`
         // can name.
         let (file_path, _) = spine_manifest::grammar::split_region(&path);
-        if repo.read_head(file_path).is_some() {
+        if let Some(at_head) = repo.read_head(file_path) {
+            // **Report what changed, not what was visited.** A path already
+            // equal to HEAD is checked out to no effect, and listing it as
+            // `restore` told a human that an abort had undone work when it had
+            // undone nothing — and made `Aborted::is_empty` false on a clean
+            // tree, so `--abort` never says "nothing to abort".
+            //
+            // The checkout still runs where the bytes differ: comparing first
+            // is cheaper than a `git checkout` per path and is the only way to
+            // know which of the two happened.
+            let on_disk = fs::read(repo.root().join(file_path)).ok();
+            if on_disk.as_deref() == Some(at_head.as_slice()) {
+                continue;
+            }
             repo.checkout_head_path(file_path)?;
             let entry = file_path.to_string();
             if !result.checked_out.contains(&entry) {

@@ -48,6 +48,9 @@ const EMBEDDED_RELEASE_MANIFEST: Option<&str> =
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+/// MF §3, not configurable.
+const MANIFEST_PATH: &str = ".spine/manifest.json";
+
 pub fn run(options: &Init) -> Result<u8> {
     let cwd = std::env::current_dir()?;
     let repo = Repo::discover(&cwd)?;
@@ -55,9 +58,19 @@ pub fn run(options: &Init) -> Result<u8> {
     // PB §6.7: "`--rollback`, `--uninstall` and `--status` are exempt from the
     // version gate, so an *older* binary can always back out a yanked release
     // or leave."
-    if options.abort || options.rollback.is_some() || options.uninstall {
-        eprintln!("spine init: that lifecycle path is not yet implemented");
-        return Ok(exit::ERROR);
+    //
+    // They are also exempt from everything below: none of them renders a
+    // template, so none needs a release manifest, a language set or a CI
+    // provider — which is what makes the exemption mean anything on a binary
+    // that has no release frozen into it.
+    if options.abort {
+        return run_abort(&repo);
+    }
+    if options.uninstall {
+        return run_uninstall(&repo, options.dry_run);
+    }
+    if let Some(sha) = &options.rollback {
+        return run_rollback(&repo, sha.as_deref(), &options.force, options.dry_run);
     }
 
     // The manifest's `repo`: the basename of the toplevel (owner ruling,
@@ -728,4 +741,184 @@ fn print_plan(plan: &plan::Plan, status: bool) {
         changed,
         refused
     );
+}
+
+// ---------------------------------------------------------------------------
+// PB §6.7's three lifecycle paths.
+//
+// Each is exempt from the version gate — "an *older* binary can always back
+// out a yanked release or leave" — and each is exempt from rendering, which is
+// what makes that exemption usable: none of them needs a release manifest, a
+// language set or a CI provider, so a binary with no release frozen into it
+// can still get a repository out.
+// ---------------------------------------------------------------------------
+
+/// `spine init --abort`.
+///
+/// PB §6.7: "**`--abort`** … restores every `spine-owned` path from HEAD and
+/// deletes the staging directory. Because the tree was clean before, abort is
+/// total."
+fn run_abort(repo: &Repo) -> Result<u8> {
+    let aborted = spine_init::abort::abort(repo)?;
+    if aborted.is_empty() {
+        println!("nothing to abort: no staging run, and no spine-owned path differs from HEAD");
+        return Ok(exit::OK);
+    }
+    for path in &aborted.checked_out {
+        println!("restore {path}");
+    }
+    for path in &aborted.deleted {
+        println!("delete  {path}");
+    }
+    if let Some(run) = &aborted.staging {
+        println!("discard staging {run}");
+    }
+    Ok(exit::OK)
+}
+
+/// `spine init --uninstall`.
+///
+/// PB §6.7: it "removes **every** `spine-owned` path … whatever their blobs —
+/// **naming each deleted-but-modified path in its output** — leaves
+/// `user-owned` and `user-modified` files in place (reported)".
+fn run_uninstall(repo: &Repo, dry_run: bool) -> Result<u8> {
+    let tree = HeadTree { repo };
+    let Some(base) = tree
+        .read(MANIFEST_PATH)
+        .and_then(|bytes| spine_manifest::Manifest::parse(&bytes, Some(repo.object_format())).ok())
+    else {
+        eprintln!(
+            "spine init --uninstall: no readable {MANIFEST_PATH} at HEAD; \
+             there is nothing recorded to remove"
+        );
+        return Ok(exit::REFUSED);
+    };
+
+    let plan = match spine_init::uninstall::compute(&tree, &base) {
+        Ok(plan) => plan,
+        Err(e) => {
+            eprintln!("spine init --uninstall: {e}");
+            return Ok(exit::REFUSED);
+        }
+    };
+
+    for row in &plan.rows {
+        println!("{:<8} {}", row.action.token(), row.path);
+    }
+    // The loudness rule, and the reason `current_blob` must locate a region by
+    // its markers alone: a hand-edited path is deleted like any other **and
+    // named**.
+    for row in plan.deleted_but_modified() {
+        println!("modified {} — deleted anyway (PB §6.7)", row.path);
+    }
+    println!();
+    println!("{} recorded path(s)", plan.rows.len());
+
+    if dry_run {
+        return Ok(exit::OK);
+    }
+    if let Err(e) = spine_init::uninstall::execute(repo, &plan) {
+        eprintln!("spine init --uninstall: {e}");
+        return Ok(exit::ERROR);
+    }
+    println!();
+    println!(
+        "removed {MANIFEST_PATH} and .spine/cache/; the landing that seals this carries \
+         `Spine-Upgrade: to=none` (PB §6.7 step 5)"
+    );
+    Ok(exit::OK)
+}
+
+/// `spine init --rollback [<sha>]`.
+///
+/// MF §6.7 is the rule and PB §6.7's default is "the **tool's** heuristic for
+/// choosing a target and is not the gate's rule; where they disagree, the gate
+/// wins and the tool refuses".
+fn run_rollback(repo: &Repo, sha: Option<&str>, forced: &[String], dry_run: bool) -> Result<u8> {
+    let target = match spine_init::rollback::locate(repo, "HEAD", sha) {
+        Ok(target) => target,
+        Err(e) => {
+            eprintln!("spine init --rollback: {e}");
+            return Ok(exit::REFUSED);
+        }
+    };
+
+    let format = repo.object_format();
+    let read_manifest = |commit: &str| {
+        repo.read_at(commit, MANIFEST_PATH)
+            .and_then(|bytes| spine_manifest::Manifest::parse(&bytes, Some(format)).ok())
+    };
+    let Some(ancestor) = read_manifest(&target.ancestor) else {
+        eprintln!(
+            "spine init --rollback: {} holds no well-formed {MANIFEST_PATH} \
+             (MF §6.7 step 1: restore-ancestor-manifest-malformed)",
+            &target.ancestor[..12.min(target.ancestor.len())]
+        );
+        // The ordinary way to reach this is to roll back the *first* install:
+        // its ancestor predates the trust root and has no manifest at all.
+        // PB §6.7 has a name for undoing that, and it is not rollback.
+        if repo.read_at(&target.ancestor, MANIFEST_PATH).is_none() {
+            eprintln!(
+                "spine init --rollback: {} is the landing that installed spine, so there is \
+                 no earlier manifest to restore. Backing that out is `--uninstall`.",
+                &target.upgrade[..12.min(target.upgrade.len())]
+            );
+        }
+        return Ok(exit::REFUSED);
+    };
+    let Some(base) = read_manifest("HEAD") else {
+        eprintln!("spine init --rollback: HEAD holds no well-formed {MANIFEST_PATH}");
+        return Ok(exit::REFUSED);
+    };
+
+    let plan = match spine_init::rollback::compute(repo, &target, &ancestor, &base, forced) {
+        Ok(plan) => plan,
+        Err(e) => {
+            eprintln!("spine init --rollback: {e}");
+            return Ok(exit::REFUSED);
+        }
+    };
+
+    println!(
+        "rolling back {} to {}",
+        &target.upgrade[..12.min(target.upgrade.len())],
+        &target.ancestor[..12.min(target.ancestor.len())]
+    );
+    for row in &plan.rows {
+        println!("{:<9} {}", row.action.token(), row.path);
+    }
+    if plan.refuses() {
+        eprintln!();
+        for row in plan.rows.iter().filter(|r| r.refusal.is_some()) {
+            eprintln!(
+                "spine init --rollback: REFUSE {} — modified after the upgrade; \
+                 name it with --force to overwrite",
+                row.path
+            );
+        }
+        return Ok(exit::REFUSED);
+    }
+
+    if dry_run {
+        return Ok(exit::OK);
+    }
+    if let Err(e) = spine_init::rollback::execute(repo, &target, &plan) {
+        eprintln!("spine init --rollback: {e}");
+        return Ok(exit::ERROR);
+    }
+
+    // MF §6.7 step 3 and §6.7.1: the ancestor's manifest **whole**, with only
+    // `paths` replaced by the monotone union — "the floor never shrinks, not
+    // even on rollback".
+    let rolled = spine_init::rollback::rollback_manifest(&ancestor, &base, format)
+        .map_err(|r| format!("the rollback manifest is not conforming: {r}"))?;
+    std::fs::write(repo.root().join(MANIFEST_PATH), rolled.to_bytes())?;
+
+    println!();
+    println!(
+        "restored {} path(s) and rewrote {MANIFEST_PATH}; the landing that seals this carries \
+         `Spine-Upgrade: from-manifest=<sha>` (PB §7.5)",
+        plan.rows.len()
+    );
+    Ok(exit::OK)
 }
