@@ -126,17 +126,6 @@ pub enum Variant {
     Bug,
 }
 
-impl Variant {
-    /// The template name MF §3.6 spells, and `templates[<name>]` keys.
-    pub fn template_name(self) -> &'static str {
-        match self {
-            Variant::Intent => "intent",
-            Variant::Change => "intent-change",
-            Variant::Bug => "intent-bug",
-        }
-    }
-}
-
 /// The subject of a `--land` or `--review`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Subject {

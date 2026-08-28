@@ -305,6 +305,65 @@ impl Repo {
             .collect())
     }
 
+    /// A git config value.
+    pub fn config(&self, key: &str) -> Option<String> {
+        run(&self.root, &["config", "--get", key])
+            .ok()
+            .map(|v| v.trim_end().to_string())
+            .filter(|v| !v.is_empty())
+    }
+
+    /// Whether the repository has any remote configured.
+    ///
+    /// PB §5.4's fetch requirement exists so a stale clone cannot recreate an
+    /// id that already landed; a repository with no remote has nothing to be
+    /// stale against, and a solo developer "runs the same protocol".
+    pub fn has_remote(&self) -> bool {
+        run(&self.root, &["remote"]).is_ok_and(|out| !out.trim().is_empty())
+    }
+
+    /// Every ref name in the repository, for PB §5.4's ledger.
+    ///
+    /// Unfiltered: which patterns count is PB §5.4's rule and not git's, and a
+    /// caller that passed patterns here would have the rule in two places.
+    pub fn ref_names(&self) -> Vec<String> {
+        run(&self.root, &["for-each-ref", "--format=%(refname)"])
+            .map(|out| out.lines().map(str::to_string).collect())
+            .unwrap_or_default()
+    }
+
+    /// PB §5.4's round-trip: "fetches `refs/heads/<trunk>` and
+    /// `refs/heads/intent/*` immediately before allocating".
+    ///
+    /// Exactly those two refspecs, not `git fetch --all`: allocation reads the
+    /// ledger, and fetching more would make `spine new` slower for no id it
+    /// would notice.
+    pub fn fetch_trunk_and_intents(&self, trunk: &str) -> bool {
+        let remote = match run(&self.root, &["remote"]) {
+            Ok(out) => match out.lines().next() {
+                Some(name) => name.trim().to_string(),
+                None => return false,
+            },
+            Err(_) => return false,
+        };
+        let trunk_spec = format!("+refs/heads/{trunk}:refs/remotes/{remote}/{trunk}");
+        let intent_spec = format!("+refs/heads/intent/*:refs/remotes/{remote}/intent/*");
+        run(
+            &self.root,
+            &["fetch", "--quiet", &remote, &trunk_spec, &intent_spec],
+        )
+        .is_ok()
+    }
+
+    /// `git branch <name> <start>` followed by a checkout of it.
+    ///
+    /// PB §5.4: "`spine new` branches only from trunk", so the start point is
+    /// the caller's and is always trunk's ref.
+    pub fn create_branch_from(&self, branch: &str, start: &str) -> Result<()> {
+        run(&self.root, &["branch", branch, start])?;
+        run(&self.root, &["checkout", "--quiet", branch]).map(|_| ())
+    }
+
     /// `git checkout <commit> -- <path>` — PB §6.7's own verb for a rollback's
     /// restore. It restores the mode along with the bytes, which is why the
     /// restore does not write the file itself.

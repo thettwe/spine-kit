@@ -65,6 +65,32 @@ impl Scratch {
         self.spine(&args)
     }
 
+    /// `(exit, stdout, stderr)` — kept apart, for the commands that put an
+    /// artifact on stdout and everything else on stderr.
+    fn spine_split(&self, args: &[&str]) -> (i32, String, String) {
+        self.spine_split_env(args, &[])
+    }
+
+    /// The same, with environment overrides.
+    ///
+    /// Used to give git no identity at all: unsetting the *local*
+    /// `user.email` proves nothing, because git falls back to the global and
+    /// system files — which is the behaviour a user wants and the reason the
+    /// refusal is hard to reach by accident.
+    fn spine_split_env(&self, args: &[&str], env: &[(&str, &str)]) -> (i32, String, String) {
+        let mut command = Command::new(spine());
+        command.current_dir(&self.0).args(args);
+        for (key, value) in env {
+            command.env(key, value);
+        }
+        let out = command.output().expect("spine runs");
+        (
+            out.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    }
+
     fn spine(&self, args: &[&str]) -> (i32, String) {
         let out = Command::new(spine())
             .current_dir(&self.0)
@@ -154,13 +180,18 @@ impl Drop for Scratch {
 }
 
 fn git(dir: &Path, args: &[&str]) -> Option<()> {
+    git_out(dir, args).map(|_| ())
+}
+
+/// The same, keeping stdout — for the assertions that read a ref back.
+fn git_out(dir: &Path, args: &[&str]) -> Option<String> {
     Command::new("git")
         .current_dir(dir)
         .args(args)
         .output()
         .ok()
         .filter(|o| o.status.success())
-        .map(|_| ())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim_end().to_string())
 }
 
 /// Every test here needs the CLI, and it only exists once the workspace is
@@ -782,4 +813,96 @@ fn rolling_back_the_install_says_to_uninstall_instead() {
     let (code, text) = scratch.init_raw(&["--rollback", "--dry-run"]);
     assert_eq!(code, 2, "{text}");
     assert!(text.contains("--uninstall"), "{text}");
+}
+
+/// PB §11: `spine new` "runs the interview (§3.4) on a fresh `intent/<ID>`
+/// branch and emits the filled template, stamped with the manifest's template
+/// version", and PB §5.4: it "branches only from trunk".
+#[test]
+fn spine_new_allocates_branches_and_scaffolds() {
+    let Some(scratch) = Scratch::new("new-create") else {
+        return;
+    };
+    if !available() || build_kind(&scratch) != BuildKind::Release {
+        return;
+    }
+    assert_eq!(scratch.init(&[]).0, 0);
+    scratch.commit("spine init");
+
+    let (code, stdout, stderr) = scratch.spine_split(&["new"]);
+    assert_eq!(code, 0, "{stderr}");
+    // The id alone reaches stdout, so `ID=$(spine new)` works.
+    assert_eq!(stdout.trim(), "INT-1");
+
+    assert_eq!(
+        git_out(&scratch.0, &["rev-parse", "--abbrev-ref", "HEAD"]).as_deref(),
+        Some("intent/INT-1")
+    );
+    let doc = scratch.read("intents/INT-1.md");
+    assert!(doc.starts_with("# INT-1: "), "{doc}");
+    // "stamped with the manifest's template version", and CN §9.1's version.
+    assert!(doc.contains("Template: intent@2"), "{doc}");
+    assert!(doc.contains("Constitution: v"), "{doc}");
+    // ID §4.3's owner is the principal, verbatim, with no `@` prefix added.
+    assert!(doc.contains("Owner: t@example.invalid"), "{doc}");
+
+    // PB §5.4: "branches only from trunk" — the new branch's tip is trunk's.
+    assert_eq!(
+        git_out(&scratch.0, &["rev-parse", "intent/INT-1"]),
+        git_out(&scratch.0, &["rev-parse", "main"])
+    );
+}
+
+/// PB §5.4: "takes max+1 over live `refs/heads/intent/*` … and every
+/// `Spine-Intent` id sealed on trunk", so the second allocation clears the
+/// first whether or not the first was ever committed.
+#[test]
+fn a_second_new_does_not_reuse_the_first_id() {
+    let Some(scratch) = Scratch::new("new-allocate") else {
+        return;
+    };
+    if !available() || build_kind(&scratch) != BuildKind::Release {
+        return;
+    }
+    assert_eq!(scratch.init(&[]).0, 0);
+    scratch.commit("spine init");
+
+    let (_, first, _) = scratch.spine_split(&["new"]);
+    git(&scratch.0, &["checkout", "--quiet", "main"]).expect("back to trunk");
+    let (code, second, stderr) = scratch.spine_split(&["new", "--bug"]);
+    assert_eq!(code, 0, "{stderr}");
+
+    assert_eq!(first.trim(), "INT-1");
+    // One number space across both prefixes: `BUG-1` beside `INT-1` would be
+    // two documents whose node ids differ by three bytes (DM §5.2).
+    assert_eq!(second.trim(), "BUG-2");
+    assert!(scratch.0.join("intents/BUG-2.md").exists());
+}
+
+/// The scaffold's `Owner:` is "the principal of the signing identity", and
+/// there is no `--identity` on PB §11's `spine new`. An unset `user.email` is
+/// a refusal, not a placeholder in a document a human is about to sign.
+#[test]
+fn new_refuses_rather_than_inventing_an_owner() {
+    let Some(scratch) = Scratch::new("new-no-owner") else {
+        return;
+    };
+    if !available() || build_kind(&scratch) != BuildKind::Release {
+        return;
+    }
+    assert_eq!(scratch.init(&[]).0, 0);
+    scratch.commit("spine init");
+    git(&scratch.0, &["config", "--unset", "user.email"]).expect("unset");
+
+    // And no global or system identity to fall back to.
+    let (code, _, stderr) = scratch.spine_split_env(
+        &["new"],
+        &[
+            ("GIT_CONFIG_GLOBAL", "/dev/null"),
+            ("GIT_CONFIG_SYSTEM", "/dev/null"),
+        ],
+    );
+    assert_eq!(code, 2, "{stderr}");
+    assert!(stderr.contains("user.email"), "{stderr}");
+    assert!(!scratch.0.join("intents").exists(), "nothing was written");
 }

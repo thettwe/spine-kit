@@ -5,6 +5,7 @@
 //! diagnostics go to stderr, the exit code is the machine-readable answer, and
 //! a refusal leaves the repository exactly as it was.
 
+mod allocate;
 mod argv;
 mod check;
 mod index;

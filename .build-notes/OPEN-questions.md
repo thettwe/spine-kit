@@ -111,3 +111,30 @@ it later changes no stored bytes.
 **The fix is one word** — *"and no other entry has `class == "protected"`"*
 becomes *"and no entry with `gate != "G7"` has `class == "protected"`"*, if the
 counter is meant to count the two-lease landing.
+
+## 5 · `spine new --from <branch>` — how the quick branch's work reaches the intent branch
+
+**Where.** PB §11: *"`--from <branch>` promotes an escalated quick-lane
+branch."* PB §5.2 names the trigger — a quick-lane change that trips a Drift or
+Strength wire, touches a harness path, adds a `@verifies` pragma, or intersects
+an in-flight lease is *"escalated — needs an intent (`spine new --from
+<branch>`)"*.
+
+**What is fixed.** The result is *"a fresh `intent/<ID>` branch"* (PB §11), and
+PB §5.4 constrains where it starts: *"`spine new` branches only from trunk — a
+stacked intent would misattribute members after the first lands."*
+
+**What is not.** How the quick branch's commits get onto it. Cherry-picked one
+by one, squashed into a single commit, merged, or left in the worktree for the
+human to commit — the corpus names none of these. Each produces a different
+`M(L) = git rev-list B..L`, which is the changeset `dump.md` §8.2 derives and
+G10 reconstructs, so the choice is ledger content and not a convenience.
+
+**What the implementation does.** Refuses, naming the flag. The plain creation
+form is built; `--from` is not, because guessing here would invent the
+membership of a changeset.
+
+**The fix is one clause** in PB §11 or §5.2 saying which of the four it is.
+`spine stats` *"counts promotions separately"*, which suggests the promoted
+commits stay identifiable — an argument for cherry-pick or merge over squash,
+but not a statement of one.
