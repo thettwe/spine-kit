@@ -334,6 +334,27 @@ pub trait Host {
     /// ordering guarantee — records are "All serialized by the collector after
     /// reaping every process group."
     fn reap_all(&mut self);
+
+    /// RF §7.1 step 8: "spawn it as a child **under the runner disposition of
+    /// the boundary** and read its stream over the pipe, enforcing the deadline
+    /// below."
+    ///
+    /// **An adapter cannot spawn for itself**, which is why this is on `Host`
+    /// and not on `RunnerAdapter`. The boundary is the host's — the mount, PID,
+    /// IPC, network and user namespaces, the mapped identity, the masked result
+    /// directory — and a runner started outside it is a runner RF §7.1's whole
+    /// step 6 did not contain. The adapter chooses the argv (`spine-resolve`'s
+    /// ratified table) and reads the bytes; the host decides what the process
+    /// runs inside.
+    ///
+    /// **The stream is the transport's, not the runner's stdout.** RF §6.6:
+    /// "it is read over a pipe the collector holds, it is not supplied by the
+    /// candidate's environment". `env` is what the adapter needs on the child
+    /// to reach that pipe — a plugin module name and the descriptor to write
+    /// to — and it may not carry key material: `keys::Probe`'s step-4 reading
+    /// is over the collector's own environment, and is honest about "every
+    /// runner invocation" only because no invocation adds any.
+    fn spawn(&mut self, spec: &Spawn<'_>) -> Spawned;
 }
 
 /// One id in a runner's enumeration of `B`.
@@ -431,6 +452,44 @@ pub trait RunnerAdapter {
 
     /// The `T` run. RF §7.1 step 8.
     fn run_candidate(&mut self, host: &mut dyn Host, timeout_secs: u64) -> CandidateRun;
+}
+
+/// One runner invocation, as the adapter asks for it.
+#[derive(Debug, Clone)]
+pub struct Spawn<'a> {
+    /// `import-resolver.md`'s ratified argv, from `spine-resolve`. IR §11.1:
+    /// "**No adapter runs a command this section has not already ratified.**"
+    pub argv: &'a [&'a str],
+    /// Which checkout it runs against — the host is already standing on it
+    /// (RF §7.1 steps 7 and 8), and this is carried so a host can refuse a
+    /// mismatch rather than run the wrong tree.
+    pub checkout: Checkout,
+    /// Environment the child needs to reach the transport's pipe. Added, never
+    /// removed: RF §7.1 makes the child's environment "the collector's own".
+    pub env: &'a [(&'a str, String)],
+    /// `params.timeout`, from trunk.
+    pub timeout_secs: u64,
+}
+
+/// What a spawn produced. The three failures are RF §7.3's rows, named so an
+/// adapter maps rather than invents.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Spawned {
+    /// The transport's bytes, and whether any member of the process group was
+    /// terminated by a signal.
+    ///
+    /// RF §7.3 makes the second a conjunct of `complete`: "`complete` requires
+    /// **both** that the adapter parsed that runner's terminal session-end
+    /// event **and** that no member of its process group was terminated by a
+    /// signal". The exit code is deliberately absent — "The runner's *exit
+    /// code* is never the discriminator — a red suite exits non-zero on every
+    /// runner that ships, so an exit-code test would make `complete`
+    /// unreachable for exactly the runs G1 exists to judge."
+    Stream { bytes: Vec<u8>, signalled: bool },
+    /// "The runner could not be started at all."
+    SpawnFailed,
+    /// "The collector's deadline expired … and it killed that process group."
+    TimedOut,
 }
 
 /// The values steps 2, 4 and 5 produced, which [`collect`] writes into the

@@ -6,6 +6,7 @@ members = [
     "crates/spine-template",
     "crates/spine-init",
     "crates/spine-resolve",
+    "crates/spine-runner",
     "crates/spine-graph",
     "crates/spine-isolate",
     "crates/spine-collect",

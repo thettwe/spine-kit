@@ -181,6 +181,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "spine-runner"
+version = "0.0.0"
+dependencies = [
+ "spine-canon",
+ "spine-collect",
+ "spine-resolve",
+]
+
+[[package]]
 name = "spine-template"
 version = "0.0.0"
 dependencies = [

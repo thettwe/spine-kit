@@ -11,7 +11,7 @@ use std::rc::Rc;
 use spine_canon::ObjectFormat;
 use spine_collect::collector::{
     BaseEnumeration, BaseId, BaseOutcomeRun, CandidateRun, Checkout, Host, Mode, Policy,
-    ResultItem, Run, RunnerAdapter, collect,
+    ResultItem, Run, RunnerAdapter, Spawn, Spawned, collect,
 };
 use spine_collect::{BaseOutcome, Outcome, Profile, RunnerToken, Status};
 use spine_manifest::Isolation;
@@ -45,6 +45,13 @@ impl Host for FakeHost {
 
     fn reap_all(&mut self) {
         self.journal.borrow_mut().push("reap".into());
+    }
+    /// This fake's adapters are hand-written and never spawn: the ordering
+    /// tests are about *when* the collector calls an adapter, not about what a
+    /// process did. A host that were asked to spawn here would mean an adapter
+    /// under test had stopped being a fake.
+    fn spawn(&mut self, _spec: &Spawn<'_>) -> Spawned {
+        unreachable!("the ordering tests drive adapters directly, never processes")
     }
 }
 
