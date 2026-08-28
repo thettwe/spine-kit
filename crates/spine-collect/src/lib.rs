@@ -45,6 +45,7 @@ pub mod file;
 pub mod header;
 pub mod malformed;
 pub mod outcome;
+pub mod prepare;
 pub mod record;
 
 pub use collector::{
@@ -56,4 +57,5 @@ pub use file::ResultFile;
 pub use header::{Header, Profile, Provenance};
 pub use malformed::{Malformed, Section};
 pub use outcome::{BaseOutcome, Outcome};
+pub use prepare::{Collector, Git, PrepareError, Prepared, Refs, SelfBytes, SelfIdentity, prepare};
 pub use record::{BaseRecord, EndRecord, ResultRecord, RunnerToken, Status};
