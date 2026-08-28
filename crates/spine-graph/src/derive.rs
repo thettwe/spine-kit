@@ -228,7 +228,7 @@ impl<'a> Indexer<'a> {
             }
         }
 
-        self.derive_constitutions(&repo_name, &landings, &mut graph)?;
+        self.derive_constitutions(&repo_name, &walk, &landings, &mut graph)?;
         self.derive_adrs(&repo_name, &head, &mut graph)?;
 
         // Computed once and used twice: `reverted` is a status *and* an edge,
@@ -410,10 +410,32 @@ impl<'a> Indexer<'a> {
     /// header at line 2 *"not because that example happened to put it there"*,
     /// which is why the 2 below is a constant and not a search.
     ///
-    /// **Only landings are consulted.** DM §12.1's trust root carries
-    /// `CONSTITUTION.md` at v3 and the published dump cites `git:<L>:…`, not
-    /// `git:<T0>:…`: the trust root is not a landing, so the first landing at
-    /// which a version is observed is the one that introduced it.
+    /// **The walk, not the landings** — CN §9.6 separates the two facts and an
+    /// earlier reading here conflated them. The node set is "one per distinct
+    /// version observed **on the first-parent walk**"; the `src` is "the
+    /// landing that introduced the version". Restricting the *set* to landings
+    /// because the *citation* is a landing dropped every version no landing
+    /// carries.
+    ///
+    /// It is reachable and DM §9 case 3 states it in terms: "Trunk resolves and
+    /// is at or below the trust root, with no sealed landing above it … Signer
+    /// and constitution nodes are derived from **the trust root commit
+    /// itself**, so this case is empty only in a repository where `spine init`
+    /// has not yet landed anything." With landings only, that repository's
+    /// constitution produced no node at all, and a `built_under` edge to it
+    /// would name a node the dump does not carry.
+    ///
+    /// **Landings first, then the rest of the walk.** The citation for every
+    /// version a landing carries is unchanged — DM §12.1's `T0` "carries the
+    /// keyring, `CONSTITUTION.md` at v3" and the published node cites
+    /// `git:<L>:…`, the landing — so the published dump reproduces byte for
+    /// byte. The second pass adds only versions no landing carries, citing the
+    /// commit that has one, which for case 3 is the trust root itself.
+    ///
+    /// **DERIVED**: CN §9.6 says the `src` "is the landing that introduced the
+    /// version", and for such a version there is no landing to name. The trust
+    /// root commit is the only object there is to cite, and it is what
+    /// "derived from the trust root commit itself" leaves.
     ///
     /// The shipped half of `protects` is **not** here, and its absence is the
     /// rule: DM §8.5 clause 2 excludes it because *"including it would make the
@@ -423,13 +445,24 @@ impl<'a> Indexer<'a> {
     fn derive_constitutions(
         &self,
         repo: &str,
+        walk: &[String],
         landings: &[Landing],
         graph: &mut Graph,
     ) -> Result<()> {
         let mut seen: Vec<u64> = Vec::new();
-        for landing in landings {
-            let path = self.constitution_path(&landing.sha);
-            let Some(bytes) = self.repo.blob_at(&landing.sha, &path) else {
+        // Pass 1: the landings, in the order they appear on the walk. This is
+        // the citation CN §9.6 fixes and DM §12.2 publishes.
+        let from_landings: Vec<String> = landings.iter().map(|l| l.sha.clone()).collect();
+        // Pass 2: every other commit on the walk, for a version no landing
+        // carries at all.
+        let rest: Vec<String> = walk
+            .iter()
+            .filter(|sha| !from_landings.contains(sha))
+            .cloned()
+            .collect();
+        for sha in from_landings.iter().chain(rest.iter()) {
+            let path = self.constitution_path(sha);
+            let Some(bytes) = self.repo.blob_at(sha, &path) else {
                 continue;
             };
             let Some(version) = constitution_version(&bytes) else {
@@ -445,14 +478,14 @@ impl<'a> Indexer<'a> {
                 node.clone(),
                 Attrs::new(),
                 Src::FileLineAt {
-                    sha: landing.sha.clone(),
+                    sha: sha.clone(),
                     path: path.as_bytes().to_vec(),
                     line: 2,
                 },
             ));
             for (pattern, line) in effective_c_a2(&bytes) {
                 let src = Src::FileLineAt {
-                    sha: landing.sha.clone(),
+                    sha: sha.clone(),
                     path: path.as_bytes().to_vec(),
                     // CN §9.6: "**Every pattern on the line shares the line's
                     // number**", which is ID §6.6's rule for a touchpoint list

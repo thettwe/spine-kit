@@ -489,3 +489,69 @@ fn a_landing_below_the_trust_root_is_not_walked() {
     );
     assert!(trunk.t0.len() == 40 || trunk.t0.len() == 64);
 }
+
+/// DM §9 case 3, in terms: "Trunk resolves and is at or below the trust root,
+/// with no sealed landing above it. `head` is present. Signer **and
+/// constitution** nodes are derived from **the trust root commit itself**
+/// (§8.2), so this case is empty only in a repository where `spine init` has
+/// not yet landed anything."
+///
+/// CN §9.6 states the node set and the citation as two facts — "one per
+/// distinct version observed **on the first-parent walk**", and "`<sha>` is the
+/// landing that introduced the version" — and an earlier reading here derived
+/// the *set* from the landings because the *citation* is a landing. A version
+/// no landing carries then produced no node at all, which is every repository
+/// standing at its own trust root: `spine init` "lands directly" (PB §6.7) and
+/// therefore seals nothing.
+///
+/// The consequence is not cosmetic. `built_under` is an edge to
+/// `<repo>/constitution:v<n>`, so an intent built under that version would name
+/// a node the dump does not carry.
+#[test]
+fn a_trust_root_with_no_landing_above_it_still_has_its_constitution() {
+    let Some(trunk) = Trunk::new("trust-root-constitution") else {
+        return;
+    };
+    // Nothing is landed: the trust root is the tip.
+    assert_eq!(trunk.tip, trunk.t0);
+
+    let graph = trunk.graph();
+    let constitution = node(&graph, &id::constitution("myrepo", 3));
+    assert_eq!(
+        constitution.src.render(),
+        format!("git:{}:CONSTITUTION.md:2", trunk.t0),
+        "the only object there is to cite"
+    );
+
+    // The signer half of §9 case 3 was already right, and stays right — the
+    // two are derived from the same commit and should not disagree about
+    // whether it exists.
+    assert!(
+        graph.nodes().iter().any(|n| n.kind == NodeKind::Signer),
+        "signers come from the trust root's keyring"
+    );
+}
+
+/// And the citation for a version a landing *does* carry is unchanged, which is
+/// what DM §12.2 publishes: the trust root carries `CONSTITUTION.md` at v3 and
+/// the node cites the landing above it, not the trust root.
+#[test]
+fn a_version_a_landing_carries_is_cited_at_the_landing() {
+    let Some(mut trunk) = Trunk::new("landing-citation") else {
+        return;
+    };
+    let tree = trunk.stage("src/a.py", Some("a = 1\n"));
+    let base = trunk.t0.clone();
+    let landing = trunk.land(
+        &gated_envelope("INT-1", "A change", &base, &tree, &[]),
+        &tree,
+    );
+
+    let graph = trunk.graph();
+    let constitution = node(&graph, &id::constitution("myrepo", 3));
+    assert_eq!(
+        constitution.src.render(),
+        format!("git:{landing}:CONSTITUTION.md:2"),
+        "the landing, not the trust root — DM §12.2"
+    );
+}
