@@ -1,0 +1,11 @@
+quick: bump tar to 6.2.2 for CVE-2026-1188
+
+Spine-Envelope: 1
+Spine-Event: land
+Spine-Lane: quick
+Spine-Review: quick class=protected head=e04b19a7c35d820f6e19b47a0c58d3f27e6a1b90 tree=9d17e0c4a52b836f10e7c94d2a6b58f03c1e7d46 base=2c6a91d0f4b783e5a19c07d2f6b4830e59c1a72d report=sha256:5c31e08a9b7d4f26013ac85be2947f0d6a1b3c85f70e29d4a6b81c035e7f9d24 wires=G11 reason="no signer on a quick-lane landing; auto-merge unavailable, precondition 0 unmet under threat.candidate=hostile" reviewer=alice@example.com
+Spine-Review-Sig: U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgxvTrxLGqws2RJ2UJVd4g85wc48KH9N6ZPi2/2ImeqVoAAAAPc3BpbmUtcmV2aWV3QHYxAAAAAAAAAAZzaGE1MTIAAABTAAAAC3NzaC1lZDI1NTE5AAAAQAK72bU9o5uYhml4hRhKRPA2uoogDgnd2DKIpe8NM+t+n3ldT9ImmLpeEbaI+WtQYMI8vUxgFC+Zn0TuqciwEQg=
+Spine-Gates: G1=pass G2=pass G5=pass G7=pass G8=pass G9=pass G11=pass G13=pass G14=pass G15=pass G16=pass
+Spine-Strategy: squash
+Spine-Seal: quick base=2c6a91d0f4b783e5a19c07d2f6b4830e59c1a72d head=e04b19a7c35d820f6e19b47a0c58d3f27e6a1b90 tree=9d17e0c4a52b836f10e7c94d2a6b58f03c1e7d46 report=sha256:0d84b71fe2a35c609d18a47b2e5c930f6b18d47a02c39e51f8a6b0d43c72e915 tool=1.4.0+sha256:41d0e9b7c2a6538f10bd47e29c05a3f6b81d24e70c9a5b3f68d1027ae4c95b3d git=2.45 mode=solo threat=hostile profile=none envelope=sha256:9764852ed4bd33a9eb42ca0674b88195f03eeac20df829b6e845175a449be44d signer=alice@example.com
+Spine-Seal-Sig: U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgxvTrxLGqws2RJ2UJVd4g85wc48KH9N6ZPi2/2ImeqVoAAAANc3BpbmUtc2VhbEB2MQAAAAAAAAAGc2hhNTEyAAAAUwAAAAtzc2gtZWQyNTUxOQAAAEAQjNpu4BY7x7D5Ijiry6227+20foMZwkiaSzV9eC6W0yeCmB6tainJciyThFt8dq3YUXLg2P22n1gEsS9h6fAE

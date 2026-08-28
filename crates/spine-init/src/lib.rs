@@ -10,12 +10,22 @@
 //! There is no upgrade command: on an initialised repository `init` is
 //! idempotent, and an upgrade is a re-run.
 
+pub mod abort;
 pub mod apply;
 pub mod git;
 pub mod plan;
+pub mod resolve;
+pub mod rollback;
 pub mod staging;
+pub mod uninstall;
+pub mod upgrade;
 
+pub use abort::{Aborted, AbortError};
 pub use apply::{Applied, ApplyError};
 pub use git::{HeadTree, Repo};
 pub use staging::{Interrupted, Staging};
 pub use plan::{Action, Plan, PlanRow, RefuseReason, State, TreeSource};
+pub use resolve::{Reclassification, Resolutions, Resolved, ResolveError};
+pub use rollback::{RestoreAction, RollbackPlan, RollbackError};
+pub use uninstall::{UninstallAction, UninstallPlan, UninstallError};
+pub use upgrade::{Endpoint, UpgradeLine, UpgradeError};

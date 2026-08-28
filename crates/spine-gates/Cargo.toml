@@ -1,0 +1,20 @@
+[package]
+name = "spine-gates"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+spine-canon = { path = "../spine-canon" }
+spine-manifest = { path = "../spine-manifest" }
+spine-collect = { path = "../spine-collect" }
+spine-graph = { path = "../spine-graph" }
+spine-report = { path = "../spine-report" }
+spine-envelope = { path = "../spine-envelope" }
+spine-intent = { path = "../spine-intent" }
+spine-resolve = { path = "../spine-resolve" }
+
+[lints]
+workspace = true

@@ -1,0 +1,21 @@
+[package]
+name = "spine-intent"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+spine-canon = { path = "../spine-canon" }
+spine-manifest = { path = "../spine-manifest" }
+spine-resolve = { path = "../spine-resolve" }
+
+[dev-dependencies]
+# Render-side only, and only in tests: TM §6.3's trap — "a scaffold does not
+# parse, and that is the design" — is the strongest available check of both
+# crates at once, and it needs the renderer's own bytes rather than a copy.
+spine-template = { path = "../spine-template" }
+
+[lints]
+workspace = true

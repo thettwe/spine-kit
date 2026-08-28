@@ -99,6 +99,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "spine-envelope"
+version = "0.0.0"
+dependencies = [
+ "spine-canon",
+ "spine-manifest",
+ "spine-report",
+]
+
+[[package]]
+name = "spine-gates"
+version = "0.0.0"
+dependencies = [
+ "spine-canon",
+ "spine-collect",
+ "spine-envelope",
+ "spine-graph",
+ "spine-intent",
+ "spine-manifest",
+ "spine-report",
+ "spine-resolve",
+]
+
+[[package]]
 name = "spine-graph"
 version = "0.0.0"
 dependencies = [
@@ -116,6 +139,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "spine-intent"
+version = "0.0.0"
+dependencies = [
+ "spine-canon",
+ "spine-manifest",
+ "spine-resolve",
+ "spine-template",
+]
+
+[[package]]
 name = "spine-isolate"
 version = "0.0.0"
 dependencies = [
@@ -127,6 +160,16 @@ name = "spine-manifest"
 version = "0.0.0"
 dependencies = [
  "spine-canon",
+]
+
+[[package]]
+name = "spine-report"
+version = "0.0.0"
+dependencies = [
+ "spine-canon",
+ "spine-collect",
+ "spine-manifest",
+ "spine-template",
 ]
 
 [[package]]

@@ -1,0 +1,13 @@
+INT-042: approve
+
+Spine-Event: approve
+Spine-Intent: INT-042
+Spine-Approve: INT-042 intent=dfb4079e22de55ec377468b9b697fdf86085ea37 base=5f8e2a10cd47b6390e5a2c8db14f70369ba2e0d7 rounds=1 total_rounds=3 reopens=1 red=5/5 freeze=sha256:3a8fc3095a793cdf9dfdbe1310aeff0a1dd87888aaaaf3f01edf19275fb544c2 signer=alice@example.com
+Spine-Approve-Sig: U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgxvTrxLGqws2RJ2UJVd4g85wc48KH9N6ZPi2/2ImeqVoAAAAPc3BpbmUtcmV2aWV3QHYxAAAAAAAAAAZzaGE1MTIAAABTAAAAC3NzaC1lZDI1NTE5AAAAQDpCQ3jAQFLU+gzT862njx6wJW7bUwJZpO+VlQplHR/4iiWpY5w717oDGruM60CTRI5cQQx+8Xo/Ufp40bawMgM=
+Spine-Frozen: 0c3a7f18e2b56d94a0c7f3e18b52d6a4907c1e3f "tests/fixtures/caf\303\251.json"
+Spine-Frozen: 1e9f4b7d0c3a6e589b2d4f7a1c0e3b6d8f2a5c94 vitest.config.ts
+Spine-Frozen: 58d2e7c1a9b4f60d3e8c2a5b7f091d4c6e8a0b23 tests/fixtures/invoices.json
+Spine-Frozen: a41b3f0c5d2e6b8a9074f1c3e5d7b90a2c4e6f81 tests/billing/invoice.test.ts
+Spine-Frozen: c07e5a2b8d1f3c6e90a4b7d2f5c8e0a3b6d9f142 tests/setup.ts
+Spine-Test: vitest tests/billing/invoice.test.ts > invoice totals > AC1 includes tax
+Spine-Test: vitest tests/billing/invoice.test.ts > invoice totals > AC2 zero-rated lines

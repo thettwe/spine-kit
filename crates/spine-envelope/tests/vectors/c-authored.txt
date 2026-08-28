@@ -1,0 +1,6 @@
+Spine-Test: vitest web/x.test.ts > totals > AC2 zero-rated
+Spine-Frozen: 7f3aa0c19b48d6250e3f7a1c85b09d24e6f31a70 tests/z.py
+Spine-Test: pytest tests/test_tax.py::test_AC1_totals
+Spine-Frozen: 0a12f7d3e5b96c08a41d7e2f39c05b6a8d14e037 "tests/caf\303\251.py"
+Spine-Frozen: 7f3aa0c19b48d6250e3f7a1c85b09d24e6f31a70 tests/a b.py
+Spine-Test: vitest web/x.test.ts > totals > AC10 rounding

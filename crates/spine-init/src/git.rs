@@ -55,6 +55,16 @@ pub struct Repo {
     object_format: ObjectFormat,
 }
 
+/// A `git ls-tree` entry: the file mode and the object id, both of which the
+/// rollback restoration rule compares (MF §6.7 step 5).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TreeEntry {
+    /// The six-digit octal mode, as `git ls-tree` prints it — `100644`,
+    /// `100755`, `120000`.
+    pub mode: String,
+    pub oid: String,
+}
+
 impl Repo {
     /// Discover the repository containing `start`.
     pub fn discover(start: &Path) -> Result<Self> {
@@ -151,6 +161,152 @@ impl Repo {
             });
         }
         Ok(String::from_utf8_lossy(&out.stdout).trim_end().to_string())
+    }
+
+    /// One `git ls-tree` entry: the mode and the object id.
+    ///
+    /// **The mode is carried because the rollback restoration rule compares it.**
+    /// MF §6.7 step 5: a restored path "exists in `T` with the same blob **and
+    /// mode**". A restore that put the right bytes back at the wrong mode —
+    /// `.spine/ci.sh` restored `100644` where the ancestor had `100755` — would
+    /// pass a blob-only check and leave the collector's entry point
+    /// unexecutable.
+    pub fn ls_tree(&self, commit: &str, path: &str) -> Result<Option<TreeEntry>> {
+        // `-z` so the path is raw: `git ls-tree` C-quotes a path containing a
+        // quote, a backslash or a control byte otherwise, which is a fourth
+        // encoding of one path (R2) and not one this lookup wants.
+        let out = run(&self.root, &["ls-tree", "-z", commit, "--", path])?;
+        let Some(entry) = out.split('\0').find(|e| !e.is_empty()) else {
+            return Ok(None);
+        };
+        // `<mode> SP <type> SP <oid> TAB <path>`
+        let (meta, entry_path) = entry
+            .split_once('\t')
+            .ok_or_else(|| GitError::Unexpected(format!("ls-tree entry {entry:?}")))?;
+        if entry_path != path {
+            // A pathspec matched something else — a directory prefix, say. The
+            // exact path is what the caller asked about.
+            return Ok(None);
+        }
+        let mut fields = meta.split(' ');
+        let mode = fields
+            .next()
+            .ok_or_else(|| GitError::Unexpected(format!("ls-tree entry {entry:?}")))?;
+        let kind = fields.next().unwrap_or_default();
+        let oid = fields
+            .next()
+            .ok_or_else(|| GitError::Unexpected(format!("ls-tree entry {entry:?}")))?;
+        if kind != "blob" {
+            return Ok(None);
+        }
+        Ok(Some(TreeEntry {
+            mode: mode.to_string(),
+            oid: oid.to_string(),
+        }))
+    }
+
+    /// The bytes at `path` in `commit`, or `None` when that tree lacks it.
+    pub fn read_at(&self, commit: &str, path: &str) -> Option<Vec<u8>> {
+        let out = Command::new("git")
+            .current_dir(&self.root)
+            .args(["cat-file", "blob", &format!("{commit}:{path}")])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+        out.status.success().then_some(out.stdout)
+    }
+
+    /// The bytes of a blob named by its own object id.
+    ///
+    /// This is what makes `--merge`'s three-way possible on an offline clone:
+    /// PB §6.7 records `base` as a blob id precisely so "the pristine content
+    /// stays reachable forever through the upgrade commit".
+    pub fn read_blob(&self, oid: &str) -> Option<Vec<u8>> {
+        let out = Command::new("git")
+            .current_dir(&self.root)
+            .args(["cat-file", "blob", oid])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .output()
+            .ok()?;
+        out.status.success().then_some(out.stdout)
+    }
+
+    pub fn rev_parse(&self, rev: &str) -> Result<String> {
+        Ok(run(&self.root, &["rev-parse", "--verify", "--quiet", rev])?
+            .trim_end()
+            .to_string())
+    }
+
+    /// PB §6.7's `--rollback` default target: "the first-parent commit that last
+    /// touched the manifest".
+    ///
+    /// MF §6.7 is explicit that this is **the tool's heuristic** and not the
+    /// gate's rule — the gate locates `U` by the ledger — "and where they
+    /// disagree, the gate wins and the tool refuses". So this returns a
+    /// candidate, never a verdict.
+    pub fn first_parent_commit_touching(&self, from: &str, path: &str) -> Result<Option<String>> {
+        let out = run(
+            &self.root,
+            &["rev-list", "--first-parent", "--max-count=1", from, "--", path],
+        )?;
+        Ok(out.split_whitespace().next().map(str::to_string))
+    }
+
+    /// Whether `candidate` is on the first-parent chain of `of` — the
+    /// reachability MF §6.7 step 1 requires of `from-manifest=<sha>`
+    /// (`restore-ancestor-unreachable`).
+    pub fn is_first_parent_ancestor(&self, candidate: &str, of: &str) -> Result<bool> {
+        let candidate = self.rev_parse(candidate)?;
+        let chain = run(&self.root, &["rev-list", "--first-parent", of])?;
+        Ok(chain.split_whitespace().any(|sha| sha == candidate))
+    }
+
+    /// The first-parent walk from `from`, newest first, as `(sha, message)`.
+    ///
+    /// The whole commit message, because a `Spine-Upgrade` line is a trailer and
+    /// a re-init has to find the uninstall landing by reading one (MF §6.9).
+    /// `%x00` separates records so a message containing blank lines — every
+    /// envelope does — cannot be mistaken for a record boundary.
+    pub fn first_parent_log(&self, from: &str) -> Result<Vec<(String, String)>> {
+        let out = run(
+            &self.root,
+            &["log", "--first-parent", "--format=%H%x1f%B%x00", from],
+        )?;
+        Ok(out
+            .split('\0')
+            .filter(|record| !record.trim().is_empty())
+            .filter_map(|record| {
+                let (sha, message) = record.trim_start_matches('\n').split_once('\x1f')?;
+                Some((sha.to_string(), message.to_string()))
+            })
+            .collect())
+    }
+
+    /// `git checkout <commit> -- <path>` — PB §6.7's own verb for a rollback's
+    /// restore. It restores the mode along with the bytes, which is why the
+    /// restore does not write the file itself.
+    pub fn checkout_path(&self, commit: &str, path: &str) -> Result<()> {
+        run(&self.root, &["checkout", commit, "--", path]).map(|_| ())
+    }
+
+    /// `git checkout HEAD -- <path>`, for `--abort`.
+    pub fn checkout_head_path(&self, path: &str) -> Result<()> {
+        self.checkout_path("HEAD", path)
+    }
+
+    /// `git rm` for a path a rollback or an uninstall retires.
+    ///
+    /// `--ignore-unmatch` so removing a path git never tracked is not an error:
+    /// the uninstall's rule is stated over the *result* ("absent from `T`"),
+    /// not over how many objects had to move to get there.
+    pub fn remove_path(&self, path: &str) -> Result<()> {
+        run(
+            &self.root,
+            &["rm", "-f", "--quiet", "--ignore-unmatch", "--", path],
+        )
+        .map(|_| ())
     }
 
     /// The bytes at `path` in HEAD, or `None` when HEAD does not have it.

@@ -9,6 +9,10 @@ members = [
     "crates/spine-graph",
     "crates/spine-isolate",
     "crates/spine-collect",
+    "crates/spine-intent",
+    "crates/spine-report",
+    "crates/spine-envelope",
+    "crates/spine-gates",
     "crates/spine-cli",
 ]
 

@@ -1,0 +1,16 @@
+[package]
+name = "spine-report"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+spine-canon = { path = "../spine-canon" }
+spine-manifest = { path = "../spine-manifest" }
+spine-collect = { path = "../spine-collect" }
+spine-template = { path = "../spine-template" }
+
+[lints]
+workspace = true

@@ -13,8 +13,14 @@
 //!    grammar (DM §5.2), the provenance grammar (PB §6.1, DM §5.4)
 //! 2. [`store`] — the in-memory graph, DM §5.5's collapse and DM §6's total
 //!    order
-//! 3. [`dump`] — the serializer G10 diffs, and G10's comparison itself
-//! 4. [`status`] — DM §4.4's five refusals and their exit codes
+//! 3. [`dump`] — the serializer G10 diffs, and G10's byte comparison
+//! 4. [`derive`] — `spine index`: the walk that builds the graph from git
+//!    objects, PB §6.2's derivation table under DM §8's exclusion set
+//! 5. [`git`] — the plumbing that walk shells out to; [`verify`] — the
+//!    OpenSSH question `approval.role` and `approval.verified` are answers to
+//! 6. [`g10`] — DM §11's procedure around the comparison, and what a failure
+//!    costs
+//! 7. [`status`] — DM §4.4's five refusals and their exit codes
 //!
 //! **What is not here.** PB §6.2 puts the canonical store in SQLite; a SQLite
 //! binding is a dependency this crate may not add, so [`store::Graph`] is the
@@ -28,12 +34,19 @@
 //! `MF`, `RF`, `CN`, `ID`, `GR` are the manifest, result-file, constitution,
 //! intent-doc and gate-report specs.
 
+pub mod derive;
 pub mod dump;
+pub mod g10;
+pub mod git;
 pub mod schema;
 pub mod status;
 pub mod store;
+pub mod verify;
 
+pub use derive::{Indexed, Indexer, Options};
 pub use dump::{DUMP_VERSION, Dump, G10, Header, edge_line, g10_compare, node_line, serialize};
+pub use g10::{Comparison, Outcome};
 pub use schema::{Attrs, EdgeKind, NodeKind, SCHEMA_VERSION, Src, tool_version_from_seal};
 pub use status::{Refusal, Status};
 pub use store::{Edge, Graph, Node};
+pub use verify::{OpenSsh, Unverified, Verifier};

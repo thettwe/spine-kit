@@ -1,0 +1,15 @@
+[package]
+name = "spine-envelope"
+version = "0.0.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+spine-canon = { path = "../spine-canon" }
+spine-manifest = { path = "../spine-manifest" }
+spine-report = { path = "../spine-report" }
+
+[lints]
+workspace = true

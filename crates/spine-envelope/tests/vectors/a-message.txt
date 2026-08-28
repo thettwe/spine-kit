@@ -1,0 +1,43 @@
+INT-042: Invoice totals include tax
+
+-----BEGIN SPINE-INTENT blob=dfb4079e22de55ec377468b9b697fdf86085ea37 bytes=765-----
+# INT-042: Invoice totals include tax
+Owner: @alice · Template: intent@2 · Ticket: https://example.invalid/t/4471 · Constitution: v3
+
+## Goal
+Invoice totals shown to a customer include tax, so the amount on the invoice
+equals the amount charged. Today the total omits tax and support reconciles
+the difference by hand.
+
+## Non-goals
+- Multi-currency invoices.
+- Recomputing invoices already issued.
+
+## Acceptance criteria
+AC-1: Given a line item in a taxed jurisdiction, when the invoice total is
+computed, then the total includes that line's tax.
+AC-2: Given a zero-rated line item, when the invoice total is computed, then
+no tax is added for that line.
+
+## Touchpoints
+Expected to change: src/billing/, api/invoices.ts
+Must NOT change: auth/, shared/schema/
+-----END SPINE-INTENT-----
+
+Spine-Envelope: 1
+Spine-Event: land
+Spine-Lane: gated
+Spine-Intent: INT-042
+Spine-Signoff: INT-042 blob=dfb4079e22de55ec377468b9b697fdf86085ea37 template=intent@2 constitution=v3 reopens=1 signer=alice@example.com
+Spine-Signoff-Sig: U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgxvTrxLGqws2RJ2UJVd4g85wc48KH9N6ZPi2/2ImeqVoAAAAQc3BpbmUtc2lnbm9mZkB2MQAAAAAAAAAGc2hhNTEyAAAAUwAAAAtzc2gtZWQyNTUxOQAAAEAclyUyeZn33w6sK7Kfb2JIRczgkOT0AECOeM0JWFmVN0JG3z9L7hgHWcwqw5my7Er5rT993xMklo8CvFJ3VzMN
+Spine-Reopen: INT-042 voids=sha256:4d1e0b7c9a2f83d6540e7b1c8a95f2036d4e8b71ca03f95e2b6d178c04a3e9f5 reopens=1 reason="AC-3 was not testable as written" signer=alice@example.com
+Spine-Reopen-Sig: U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgxvTrxLGqws2RJ2UJVd4g85wc48KH9N6ZPi2/2ImeqVoAAAAQc3BpbmUtc2lnbm9mZkB2MQAAAAAAAAAGc2hhNTEyAAAAUwAAAAtzc2gtZWQyNTUxOQAAAEDHgHMNfvexBt2aO+YGlq1AxNp0OzWVDrHPTk4KsIZuO909pFNhW6q8mNlA8Lp5crA1fTIsxlcEf/2TfYzSwssD
+Spine-Approve: INT-042 intent=dfb4079e22de55ec377468b9b697fdf86085ea37 base=5f8e2a10cd47b6390e5a2c8db14f70369ba2e0d7 rounds=1 total_rounds=3 reopens=1 red=5/5 freeze=sha256:3a8fc3095a793cdf9dfdbe1310aeff0a1dd87888aaaaf3f01edf19275fb544c2 signer=alice@example.com
+Spine-Approve-Sig: U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgxvTrxLGqws2RJ2UJVd4g85wc48KH9N6ZPi2/2ImeqVoAAAAPc3BpbmUtcmV2aWV3QHYxAAAAAAAAAAZzaGE1MTIAAABTAAAAC3NzaC1lZDI1NTE5AAAAQDpCQ3jAQFLU+gzT862njx6wJW7bUwJZpO+VlQplHR/4iiWpY5w717oDGruM60CTRI5cQQx+8Xo/Ufp40bawMgM=
+Spine-Approval: 5c9e2b71a04df836e15c9a2b7d0f43e618ca50d9
+Spine-Review: INT-042 class=tripwire head=77aa3c19e5b48f0d2617ca93b4e5f8d70a1c62b9 tree=3e91c7a2d0f46b58e19d73c0a5b284fd61e0c9a7 base=7b0d1f4a9c2e6b8d05f3a71c4e9b2d6f8a0c3e51 intent=dfb4079e22de55ec377468b9b697fdf86085ea37 report=sha256:b2f4c60e1a97d385c0b64e2f79a1d08c3e5b7f92a4160d8ce73b295f0a4d6e18 wires=G11,G2:src/shared/util.ts reason="shared helper touched outside touchpoints; read the diff and the outcomes" reviewer=bob@example.com
+Spine-Review-Sig: U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAg1kkGCpykObHX3E70Pb3F4W0IJQzJ97+2L6Vjtz6u+KYAAAAPc3BpbmUtcmV2aWV3QHYxAAAAAAAAAAZzaGE1MTIAAABTAAAAC3NzaC1lZDI1NTE5AAAAQMp+m8/m1OtyVV86kxzsWC+vbr9Cw3O0yvmTjqjkcliRdfxVglsu9II/6KjaZnpcNBYQF92QWNy5j6vszSwVtQ4=
+Spine-Gates: G1=pass G2=override G3=pass G4=pass G5=pass G7=pass G8=pass G9=pass G11=pass G12=pass G13=pass G14=pass G15=pass G16=pass
+Spine-Strategy: merge
+Spine-Seal: INT-042 base=7b0d1f4a9c2e6b8d05f3a71c4e9b2d6f8a0c3e51 head=77aa3c19e5b48f0d2617ca93b4e5f8d70a1c62b9 tree=8b47d0e6c2a915f37e04b8d1c6a2f905e37b1d48 report=sha256:e70a3c92d1b845f6027e9ab3c5d10f684a2b7e93c60d5f81a34b0e29d7c6f105 tool=1.4.0+sha256:41d0e9b7c2a6538f10bd47e29c05a3f6b81d24e70c9a5b3f68d1027ae4c95b3d git=2.45 mode=team threat=hostile profile=container envelope=sha256:e1652897b251b001fe7e03e343d40bbdc7fb9b112ef920c8b53987916b14682f signer=ci@example.com
+Spine-Seal-Sig: U1NIU0lHAAAAAQAAADMAAAALc3NoLWVkMjU1MTkAAAAgITdSQ7pUPP71qDjFBJzCx90/w8cmEuH5BaQjDNSNbN4AAAANc3BpbmUtc2VhbEB2MQAAAAAAAAAGc2hhNTEyAAAAUwAAAAtzc2gtZWQyNTUxOQAAAECTtFvHU1geKXCGNqRVUb5Ta85Fjn1RdWSKyfBe+B+CeWhwxk6Ip6uuuQpNAL8KCwJYjXveIoflI5uq1pE14AAN
