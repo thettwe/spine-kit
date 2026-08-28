@@ -51,11 +51,13 @@ pub mod message;
 pub mod payload;
 pub mod quote;
 pub mod refusal;
+pub mod sign;
 pub mod trailer;
 pub mod verify;
 
 pub use digest::{envelope_digest, freeze_digest};
 pub use message::{CAP, Envelope, Fence, Shape};
 pub use refusal::{EnvelopeError, Refusal};
+pub use sign::{Key, SignError, sig_line, sign_line, signed_range};
 pub use trailer::{Trailer, TrailerName, is_spine_line, parse_line, render_line};
 pub use verify::{Namespace, Role, Verified, verify_line};

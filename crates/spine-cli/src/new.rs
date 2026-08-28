@@ -30,11 +30,14 @@ fn signs_with_a_human_key(new: &New) -> bool {
 }
 
 pub fn run(new: &New) -> ExitCode {
-    if signs_with_a_human_key(new) && std::env::var_os("SPINE_AGENT").is_some_and(|v| v == "1") {
-        eprintln!(
-            "spine new: this invocation signs under a human key and refuses under \
-             SPINE_AGENT=1 (PB §7.1)"
-        );
+    // PB §7.1's rule is **two** conditions and this checked one: it is
+    // "TTY-only **and** refuses under `SPINE_AGENT=1`". A CI job, a cron entry
+    // and a piped script declare nothing and have no terminal either, and none
+    // of them may reach a human key.
+    if signs_with_a_human_key(new)
+        && let Err(refusal) = crate::tty::check_this_process()
+    {
+        eprintln!("spine new: {refusal}");
         return ExitCode::from(exit::REFUSED);
     }
 

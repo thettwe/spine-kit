@@ -21,15 +21,19 @@ use crate::exit;
 ///
 /// Checked here rather than at the signing site because it is a property of
 /// the *invocation*, and the refusal must land before anything is read.
-fn refuses_under_an_agent(check: &Check) -> bool {
-    check.signs_with_a_human_key() && std::env::var_os("SPINE_AGENT").is_some_and(|v| v == "1")
+/// PB §7.1's rule, both halves: "is **TTY-only** and refuses under
+/// `SPINE_AGENT=1`". `crate::tty` owns it so `spine new`'s three signing forms
+/// and this command's four cannot drift apart.
+fn signing_refusal(check: &Check) -> Option<crate::tty::Refusal> {
+    check
+        .signs_with_a_human_key()
+        .then(crate::tty::check_this_process)
+        .and_then(Result::err)
 }
 
 pub fn run(check: &Check) -> ExitCode {
-    if refuses_under_an_agent(check) {
-        eprintln!(
-            "spine check: this invocation signs under a human key and refuses under SPINE_AGENT=1 (PB §7.1)"
-        );
+    if let Some(refusal) = signing_refusal(check) {
+        eprintln!("spine check: {refusal}");
         return ExitCode::from(exit::REFUSED);
     }
 
