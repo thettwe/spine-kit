@@ -22,6 +22,14 @@ pub enum Action {
     Create,
     Update,
     Delete,
+    /// A retired **managed region**: the block comes out, the host file stays.
+    ///
+    /// MF §3.7: a region is "a block inside **a file spine does not own**",
+    /// and "The bytes that were the region may remain — an uninstall leaves
+    /// the human's file readable." Retiring a region template through
+    /// `Action::Delete` removed `AGENTS.md` itself, prose and all — a file
+    /// that is also a `paths.agent_context` floor path.
+    StripRegion,
     Skip,
     /// "Refusal is the default. One `spine-owned` path with HEAD blob ≠
     /// manifest blob stops the whole upgrade."
@@ -34,6 +42,7 @@ impl Action {
             Action::Create => "create",
             Action::Update => "update",
             Action::Delete => "delete",
+            Action::StripRegion => "strip-region",
             Action::Skip => "skip",
             Action::Refuse => "REFUSE",
         }
@@ -197,16 +206,20 @@ pub fn development_build_plan(desired: &[Desired]) -> Plan {
 /// Compute the plan.
 ///
 /// `previous` is the manifest being upgraded from — `None` on a first `init`.
+///
+/// It takes no template-version table any more. MF §3.7 locates a region "by
+/// its markers only", and every version the plan needs is either on the marker
+/// it just read or in the record it is comparing against — a table of the
+/// binary's versions was only ever used to ask the wrong question.
 pub fn compute(
     tree: &dyn TreeSource,
     desired: &[Desired],
     previous: Option<&spine_manifest::Manifest>,
-    template_versions: &dyn Fn(&str) -> Option<u64>,
 ) -> Plan {
     let mut rows: Vec<PlanRow> = Vec::new();
 
     for want in desired {
-        rows.push(row_for(tree, want, previous, template_versions));
+        rows.push(row_for(tree, want, previous));
     }
 
     // B7's derived rule, and the one derived token that is a **write** decision
@@ -221,13 +234,16 @@ pub fn compute(
             if desired.iter().any(|d| d.path == record.path) {
                 continue;
             }
-            let head_blob = blob_of(tree, &record, template_versions);
+            let head_blob = blob_of(tree, &record);
             let state = match &head_blob {
                 None => State::Missing,
                 Some(blob) if *blob == record.blob => State::Clean,
                 Some(_) => State::Modified,
             };
             let action = match record.owner {
+                Owner::SpineOwned if head_blob.is_some() && record.region.is_some() => {
+                    Action::StripRegion
+                }
                 Owner::SpineOwned if head_blob.is_some() => Action::Delete,
                 Owner::SpineOwned => Action::Skip,
                 // PB §6.7: user-owned is "never touched again — by upgrade, by
@@ -260,7 +276,6 @@ fn row_for(
     tree: &dyn TreeSource,
     want: &Desired,
     previous: Option<&spine_manifest::Manifest>,
-    template_versions: &dyn Fn(&str) -> Option<u64>,
 ) -> PlanRow {
     let (file_path, region_key) = spine_manifest::grammar::split_region(&want.path);
 
@@ -307,8 +322,6 @@ fn row_for(
             row.reason = Some(RefuseReason::Region(region::RegionError::MarkersMissing));
             return row;
         };
-        let expected = template_versions(template_name).unwrap_or(0);
-
         match host.as_deref() {
             None => {
                 // The host file does not exist: `init` creates it with the
@@ -316,7 +329,25 @@ fn row_for(
                 row.state = State::Missing;
                 row.action = Action::Create;
             }
-            Some(host_bytes) => match region::find(host_bytes, template_name, expected, style) {
+            // **`locate`, not `find`.** MF §3.7: "a region is located by its
+            // markers only." The version-pinned lookup asked for the block at
+            // the *binary's* version, so a template bump — which is what an
+            // upgrade of a region is — made `find` return `VersionMismatch`
+            // for a block byte-identical to what spine itself wrote, the row
+            // refused, and PB §6.7 step 3 stopped the whole upgrade. All three
+            // documented exits were closed too, `resolve` keying off
+            // `SpineOwnedDiverged` only, so the repository could not be
+            // upgraded past a bump by any documented means.
+            //
+            // The state below is decided by the recorded **blob**, as it is
+            // for every other row, and that is the comparison PB §6.7's
+            // ownership table actually names: "Rewritten **only if** the HEAD
+            // blob equals the manifest blob." The marker's `@<n>` is what the
+            // upgrade is about to change, not evidence about who last touched
+            // it. `rollback::restore_region` reached this conclusion already
+            // and said so in a comment; this path never got the same
+            // treatment.
+            Some(host_bytes) => match region::locate(host_bytes, template_name, style) {
                 Ok(found) => {
                     let content = found.bytes(host_bytes);
                     let blob = spine_canon::git_blob_id(content, tree.object_format());
@@ -419,19 +450,20 @@ fn decide(row: &PlanRow, owner: Owner) -> (Action, Option<RefuseReason>) {
     }
 }
 
-fn blob_of(
-    tree: &dyn TreeSource,
-    record: &spine_manifest::FileRecord,
-    template_versions: &dyn Fn(&str) -> Option<u64>,
-) -> Option<String> {
+/// The HEAD blob of a record's own bytes — a whole file's, or a region's.
+///
+/// Located by markers, not by version (MF §3.7). This is asked about a record
+/// the next render no longer wants, so pinning the binary's version would
+/// have asked "is the block at the version we are about to stop shipping",
+/// which is the wrong question and answers `None` for every bumped region.
+fn blob_of(tree: &dyn TreeSource, record: &spine_manifest::FileRecord) -> Option<String> {
     let host = tree.read(&record.file_path)?;
     match &record.region {
         None => Some(tree.hash_object_filtered(&record.file_path, &host)),
         Some(_) => {
             let (name, _) = record.template.as_ref()?;
             let style = MarkerStyle::for_template(name)?;
-            let expected = template_versions(name)?;
-            let found = region::find(&host, name, expected, style).ok()?;
+            let found = region::locate(&host, name, style).ok()?;
             Some(spine_canon::git_blob_id(
                 found.bytes(&host),
                 tree.object_format(),

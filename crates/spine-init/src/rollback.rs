@@ -112,6 +112,13 @@ pub struct RestoreRow {
     pub is_region: bool,
     pub action: RestoreAction,
     pub refusal: Option<RestoreRefusal>,
+    /// Whether this path was modified after the upgrade — the condition PB
+    /// §6.7 refuses "unless `--force`".
+    ///
+    /// `refusal` is that condition *after* `--force` has been applied, so it
+    /// is `None` on a forced path and cannot answer "did this `--force`
+    /// override anything". Both are kept because both questions are asked.
+    pub would_refuse_unforced: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -148,6 +155,14 @@ pub enum RollbackError {
     },
     /// A path named by `--force` that the plan did not refuse.
     NotRefused(String),
+    /// PB §6.7: "A path whose HEAD blob ≠ its `U` blob was modified after the
+    /// upgrade and is refused unless `--force`."
+    ///
+    /// Front-loaded, as `apply::apply` front-loads the same rule for an
+    /// upgrade: a rollback that refuses one path and restores the others is
+    /// PB §6.7 step 3's "partial upgrade … the interrupted case by another
+    /// name".
+    PlanRefused(usize),
     Git(GitError),
     Io(String),
 }
@@ -176,6 +191,11 @@ impl core::fmt::Display for RollbackError {
             RollbackError::AncestorManifestMalformed { sha, why } => {
                 write!(f, "restore-ancestor-manifest-malformed: at {sha}: {why}")
             }
+            RollbackError::PlanRefused(n) => write!(
+                f,
+                "{n} path(s) were modified after the upgrade; name each with --force, \
+                 or the rollback restores none of them"
+            ),
             RollbackError::NotRefused(p) => {
                 write!(
                     f,
@@ -353,11 +373,24 @@ pub fn compute(
             is_region,
             action,
             refusal,
+            would_refuse_unforced: modified_since,
         });
     }
 
+    // A `--force` that overrides nothing is refused, and "nothing" is the
+    // right test: membership in `P` is not enough, because the refusal is what
+    // `--force` overrides. `resolve::resolve` already tested it this way and
+    // this did not, while its own error text — "the rollback did not refuse
+    // it" — described the check it was not performing.
+    //
+    // It is not cosmetic. A spurious `--force` carried into the landing's
+    // `forced=` is `forced-disagrees` at G16 check 10: MF §6.4, "A path in the
+    // line and not in the set is a claim of an override that did not happen."
     for path in forced {
-        if !rows.iter().any(|r| r.path == *path) {
+        let overrides_something = rows
+            .iter()
+            .any(|r| r.path == *path && r.would_refuse_unforced);
+        if !overrides_something {
             return Err(RollbackError::NotRefused(path.clone()));
         }
     }
@@ -391,13 +424,20 @@ fn tree_state(
     let Some(host) = repo.read_at(commit, file_path) else {
         return Ok(None);
     };
-    let Some((name, version)) = record.template.as_ref() else {
+    let Some((name, _version)) = record.template.as_ref() else {
         return Ok(None);
     };
     let Some(style) = MarkerStyle::for_template(name) else {
         return Ok(None);
     };
-    let Ok(found) = region::find(&host, name, *version, style) else {
+    // **`locate`, not `find`** (MF §3.7). `record` is the *ancestor's*, so a
+    // version-pinned lookup failed at both `U` and `B` whenever the upgrade
+    // bumped the region's template — both reads became `None`, the
+    // `modified_since` comparison below read `None != None`, and PB §6.7's
+    // `--force` refusal never fired. A human's committed edit inside the block
+    // was then discarded silently, which is the one thing this refusal exists
+    // to prevent.
+    let Ok(found) = region::locate(&host, name, style) else {
         // No region there: "absent", which for a region means marker-free.
         return Ok(None);
     };
@@ -511,6 +551,19 @@ pub fn rollback_manifest(
 /// than a byte write because it restores the **mode** alongside the blob, which
 /// MF §6.7 step 5 compares.
 pub fn execute(repo: &Repo, target: &Target, plan: &RollbackPlan) -> Result<(), RollbackError> {
+    // PB §6.7: "A path whose HEAD blob ≠ its `U` blob was modified after the
+    // upgrade and is refused unless `--force`."
+    //
+    // `compute` recorded the refusal in `RestoreRow.refusal` and
+    // `RollbackPlan::refuses()` existed to report it; this function iterated
+    // every row and acted regardless, and there is no other caller in the
+    // crate, so **nothing executed the rule**. A human's committed work was
+    // reverted by a plan that said it would not be.
+    let refused = plan.rows.iter().filter(|r| r.refusal.is_some()).count();
+    if refused > 0 {
+        return Err(RollbackError::PlanRefused(refused));
+    }
+
     for row in &plan.rows {
         let (file_path, _) = spine_manifest::grammar::split_region(&row.path);
         match &row.action {

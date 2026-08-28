@@ -48,15 +48,6 @@ fn want(path: &str, owner: Owner, template: &str, content: &str) -> Desired {
     }
 }
 
-fn versions(name: &str) -> Option<u64> {
-    match name {
-        "agents-block" => Some(2),
-        "gitignore" | "gitattributes" | "keyring" | "constitution" => Some(1),
-        "ci-generic" | "ci-github-collect" | "ci-github-land" | "ci-gitlab" => Some(4),
-        _ => None,
-    }
-}
-
 fn blob(content: &str) -> String {
     spine_canon::git_blob_id(content.as_bytes(), ObjectFormat::Sha1)
 }
@@ -166,7 +157,7 @@ fn a_first_init_creates_every_path() {
             "# Constitution — myrepo\n",
         ),
     ];
-    let plan = plan::compute(&tree, &desired, None, &versions);
+    let plan = plan::compute(&tree, &desired, None);
     assert!(!plan.refuses());
     assert_eq!(plan.exit_code(), 0);
     assert!(plan.rows.iter().all(|r| r.action == Action::Create));
@@ -183,7 +174,7 @@ fn rows_are_sorted_by_path() {
         want(".spine/ci.sh", Owner::SpineOwned, "ci-generic@4", "y"),
         want(".gitignore#spine", Owner::SpineOwned, "gitignore@1", "z\n"),
     ];
-    let plan = plan::compute(&tree, &desired, None, &versions);
+    let plan = plan::compute(&tree, &desired, None);
     let paths: Vec<&str> = plan.rows.iter().map(|r| r.path.as_str()).collect();
     assert_eq!(
         paths,
@@ -208,7 +199,7 @@ fn a_clean_spine_owned_path_updates_when_the_render_moves() {
     )]);
     let desired = vec![want(".spine/ci.sh", Owner::SpineOwned, "ci-generic@4", new)];
 
-    let plan = plan::compute(&tree, &desired, Some(&previous), &versions);
+    let plan = plan::compute(&tree, &desired, Some(&previous));
     let row = &plan.rows[0];
     assert_eq!(row.state, State::Clean);
     assert_eq!(row.action, Action::Update);
@@ -234,7 +225,7 @@ fn an_unchanged_render_skips() {
         same,
     )];
 
-    let plan = plan::compute(&tree, &desired, Some(&previous), &versions);
+    let plan = plan::compute(&tree, &desired, Some(&previous));
     assert_eq!(plan.rows[0].action, Action::Skip);
     assert_eq!(plan.rows[0].state, State::Clean);
 }
@@ -279,7 +270,7 @@ fn one_diverged_spine_owned_path_refuses_the_whole_plan() {
         ),
     ];
 
-    let plan = plan::compute(&tree, &desired, Some(&previous), &versions);
+    let plan = plan::compute(&tree, &desired, Some(&previous));
     let ci = plan.rows.iter().find(|r| r.path == ".spine/ci.sh").unwrap();
     assert_eq!(ci.state, State::Modified);
     assert_eq!(ci.action, Action::Refuse);
@@ -311,7 +302,7 @@ fn a_user_owned_path_is_never_rewritten_however_far_it_has_drifted() {
         seed,
     )];
 
-    let plan = plan::compute(&tree, &desired, Some(&previous), &versions);
+    let plan = plan::compute(&tree, &desired, Some(&previous));
     assert_eq!(plan.rows[0].state, State::Modified);
     assert_eq!(plan.rows[0].action, Action::Skip);
     assert!(
@@ -339,7 +330,7 @@ fn a_deleted_user_owned_seed_is_not_recreated() {
         seed,
     )];
 
-    let plan = plan::compute(&tree, &desired, Some(&previous), &versions);
+    let plan = plan::compute(&tree, &desired, Some(&previous));
     assert_eq!(plan.rows[0].action, Action::Skip);
     assert_eq!(plan.rows[0].state, State::Missing);
 }
@@ -363,7 +354,7 @@ fn a_user_modified_path_is_never_rewritten_silently() {
         "name: spine-land\n# the new render\n",
     )];
 
-    let plan = plan::compute(&tree, &desired, Some(&previous), &versions);
+    let plan = plan::compute(&tree, &desired, Some(&previous));
     assert_eq!(plan.rows[0].action, Action::Skip);
     assert!(!plan.refuses());
 }
@@ -381,7 +372,7 @@ fn a_foreign_file_at_a_spine_owned_path_refuses() {
         "#!/bin/sh\n",
     )];
 
-    let plan = plan::compute(&tree, &desired, None, &versions);
+    let plan = plan::compute(&tree, &desired, None);
     assert_eq!(plan.rows[0].state, State::Foreign);
     assert_eq!(plan.rows[0].action, Action::Refuse);
     assert!(plan.refuses());
@@ -414,7 +405,7 @@ fn a_region_is_located_by_its_markers_and_hashed_unfiltered() {
         AGENTS_REGION,
     )];
 
-    let plan = plan::compute(&tree, &desired, Some(&previous), &versions);
+    let plan = plan::compute(&tree, &desired, Some(&previous));
     let row = &plan.rows[0];
     assert_eq!(row.state, State::Clean);
     assert_eq!(row.action, Action::Skip);
@@ -445,7 +436,7 @@ fn stripped_markers_with_surviving_content_refuse() {
         AGENTS_REGION,
     )];
 
-    let plan = plan::compute(&tree, &desired, Some(&previous), &versions);
+    let plan = plan::compute(&tree, &desired, Some(&previous));
     assert_eq!(plan.rows[0].action, Action::Refuse);
     assert_eq!(plan.rows[0].reason, Some(RefuseReason::MarkersRemoved));
 }
@@ -468,7 +459,7 @@ fn a_genuinely_removed_region_is_recreated() {
         AGENTS_REGION,
     )];
 
-    let plan = plan::compute(&tree, &desired, Some(&previous), &versions);
+    let plan = plan::compute(&tree, &desired, Some(&previous));
     assert_eq!(plan.rows[0].action, Action::Create);
     assert!(!plan.refuses());
 }
@@ -483,7 +474,7 @@ fn a_host_file_whose_name_contains_a_hash_refuses() {
         "gitignore@1",
         "x\n",
     )];
-    let plan = plan::compute(&tree, &desired, None, &versions);
+    let plan = plan::compute(&tree, &desired, None);
     assert_eq!(plan.rows[0].action, Action::Refuse);
     assert_eq!(plan.rows[0].reason, Some(RefuseReason::PathHashAmbiguous));
 }
@@ -538,7 +529,7 @@ fn a_provider_change_deletes_only_the_spine_owned_paths_it_retires() {
         ),
     ];
 
-    let plan = plan::compute(&tree, &desired, Some(&previous), &versions);
+    let plan = plan::compute(&tree, &desired, Some(&previous));
     let by = |p: &str| plan.rows.iter().find(|r| r.path == p).unwrap().action;
 
     assert_eq!(by(".gitlab-ci.yml"), Action::Create);
@@ -605,9 +596,101 @@ fn the_status_line_has_the_four_fields_pb_6_7_fixes() {
         "ci-generic@4",
         "#!/bin/sh\n",
     )];
-    let plan = plan::compute(&tree, &desired, None, &versions);
+    let plan = plan::compute(&tree, &desired, None);
     assert_eq!(
         plan.rows[0].status_line(),
         "spine-owned · ci-generic@4 · missing · create"
     );
+}
+
+/// **A template bump is an upgrade of a region, not a refusal.** MF §3.7: "a
+/// region is located by its markers only."
+///
+/// The plan located the existing block with the *binary's* new version, so a
+/// bump made the lookup fail for a block byte-identical to what spine wrote:
+/// the row refused, one refusing row stops the whole upgrade (PB §6.7 step 3),
+/// and all three documented exits were closed because `resolve` keys off
+/// `SpineOwnedDiverged`. The repository could not be upgraded past a bump by
+/// any documented means.
+#[test]
+fn a_region_template_bump_updates_rather_than_refusing() {
+    // The tree carries `@2`; the release now ships `@3`.
+    let host = agents_host(AGENTS_REGION);
+    let tree = MemTree::new(&[("AGENTS.md", &host)]);
+    let previous = manifest_with(&[(
+        "AGENTS.md#spine",
+        Owner::SpineOwned,
+        "agents-block@2",
+        &blob(AGENTS_REGION),
+    )]);
+    let desired = vec![want(
+        "AGENTS.md#spine",
+        Owner::SpineOwned,
+        "agents-block@3",
+        "A new agents block.\n",
+    )];
+
+    let plan = plan::compute(&tree, &desired, Some(&previous));
+    let row = &plan.rows[0];
+    assert_eq!(row.reason, None, "a bump is not a refusal");
+    // The recorded blob still matches what is in the tree, so the path is
+    // clean and the render moved — which is `update`, as it is for a whole
+    // file whose template moved.
+    assert_eq!(row.state, State::Clean);
+    assert_eq!(row.action, Action::Update);
+    assert!(!plan.refuses());
+}
+
+/// The blob comparison still decides ownership across a bump: a block a human
+/// edited is `modified` and refuses, bumped or not.
+#[test]
+fn a_hand_edited_region_still_refuses_across_a_bump() {
+    let host = agents_host("Hand-edited by a person.\n");
+    let tree = MemTree::new(&[("AGENTS.md", &host)]);
+    let previous = manifest_with(&[(
+        "AGENTS.md#spine",
+        Owner::SpineOwned,
+        "agents-block@2",
+        &blob(AGENTS_REGION),
+    )]);
+    let desired = vec![want(
+        "AGENTS.md#spine",
+        Owner::SpineOwned,
+        "agents-block@3",
+        "A new agents block.\n",
+    )];
+
+    let plan = plan::compute(&tree, &desired, Some(&previous));
+    assert_eq!(plan.rows[0].state, State::Modified);
+    assert_eq!(plan.rows[0].reason, Some(RefuseReason::SpineOwnedDiverged));
+    assert!(plan.refuses());
+}
+
+/// MF §3.7: a region is "a block inside **a file spine does not own**", and
+/// "The bytes that were the region may remain — an uninstall leaves the
+/// human's file readable."
+///
+/// Retiring a region template gave the row `Action::Delete`, and `apply`
+/// removed the **host file** — the human's whole agent-context file, which is
+/// also a `paths.agent_context` floor path.
+#[test]
+fn a_retired_region_strips_its_block_and_keeps_its_host() {
+    let host = agents_host(AGENTS_REGION);
+    let tree = MemTree::new(&[("AGENTS.md", &host)]);
+    let previous = manifest_with(&[(
+        "AGENTS.md#spine",
+        Owner::SpineOwned,
+        "agents-block@2",
+        &blob(AGENTS_REGION),
+    )]);
+
+    // The next render set does not name it.
+    let plan = plan::compute(&tree, &[], Some(&previous));
+    let row = plan
+        .rows
+        .iter()
+        .find(|r| r.path == "AGENTS.md#spine")
+        .expect("the retired record is a row");
+    assert_eq!(row.action, Action::StripRegion);
+    assert_ne!(row.action, Action::Delete, "the host file is not spine's");
 }

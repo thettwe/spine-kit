@@ -139,14 +139,60 @@ impl Staging {
     /// Create a fresh staging run. Refuses if one is already pending — a second
     /// `init` that finds one "treats it as the interrupted case and never
     /// creates a second" (build plan B6).
+    ///
+    /// **Callers that are the re-run want [`Staging::resume_or_create`].** PB
+    /// §6.7's *Interrupted upgrade* says every crash state is "**fixed by
+    /// re-running `spine init`**", and `apply` called this unconditionally, so
+    /// the re-run refused with a message telling the operator to do the thing
+    /// they had just done. With `--abort` unimplemented, the repository was
+    /// stuck.
     pub fn create(repo_root: &Path) -> Result<Self> {
         if let Some(existing) = pending(repo_root)? {
             return Err(StagingError::SecondRun(existing.run));
         }
+        Self::fresh(repo_root)
+    }
+
+    /// The re-run's entry: adopt the pending run if there is one, else create.
+    ///
+    /// The second element is whether a run was adopted, which is what a caller
+    /// reports to the operator — PB §6.7 wants the re-run to say it recognised
+    /// its own work, not to do it silently.
+    ///
+    /// Adopting is safe because a render is a pure function of the release and
+    /// the repository's parameters: re-staging writes the same bytes over the
+    /// same names. A staged file the new run no longer wants is never renamed
+    /// — `apply` renames what this run staged — and goes with the discard.
+    ///
+    /// Two pending runs stays a refusal. That is not a state PB §6.7
+    /// describes, and picking one of them would be a guess.
+    pub fn resume_or_create(repo_root: &Path) -> Result<(Self, bool)> {
+        match pending(repo_root)? {
+            Some(existing) => Ok((existing, true)),
+            None => Ok((Self::fresh(repo_root)?, false)),
+        }
+    }
+
+    fn fresh(repo_root: &Path) -> Result<Self> {
         let run = new_run_id()?;
         let dir = repo_root.join(STAGING_DIR).join(&run);
         fs::create_dir_all(&dir).map_err(io)?;
         Ok(Staging { run, dir })
+    }
+
+    /// Whether the tree's bytes at `repo_path` are exactly what this run
+    /// staged there — PB §6.7 step 1's exception, "paths whose blob equals a
+    /// render of a pending run".
+    ///
+    /// Compared as bytes rather than as blob ids: the two agree for every
+    /// path either way, and a byte comparison needs no `hash-object` and no
+    /// opinion about filters. A path this run staged nothing for is `false`,
+    /// which is the fail-closed answer.
+    pub fn tree_matches_staged(&self, repo_root: &Path, repo_path: &str) -> bool {
+        let Ok(staged) = fs::read(self.staged_path(repo_path)) else {
+            return false;
+        };
+        fs::read(repo_root.join(repo_path)).is_ok_and(|tree| tree == staged)
     }
 
     /// Where a repository path's render is staged. Flattened by percent-free
@@ -305,6 +351,55 @@ mod tests {
         // And the pending run is found, so the re-run can continue it.
         let found = pending(&root).unwrap().unwrap();
         assert_eq!(found.run, first.run);
+    }
+
+    /// PB §6.7, *Interrupted upgrade*: every crash state is "each fixed by
+    /// **re-running `spine init`**".
+    ///
+    /// `apply` called `create` unconditionally, so the re-run refused with a
+    /// message telling the operator to re-run — and with `--abort`
+    /// unimplemented, the repository was stuck.
+    #[test]
+    fn the_re_run_adopts_the_pending_run_rather_than_refusing() {
+        let root = scratch("resume");
+        let first = Staging::create(&root).unwrap();
+        first.stage(".spine/ci.sh", b"#!/bin/sh\n").unwrap();
+
+        let (resumed, was_pending) = Staging::resume_or_create(&root).unwrap();
+        assert!(was_pending, "the re-run recognises its own work");
+        assert_eq!(resumed.run, first.run);
+
+        // And with nothing pending it creates one, reporting that it did not
+        // adopt.
+        let clean = scratch("resume-clean");
+        let (_fresh, was_pending) = Staging::resume_or_create(&clean).unwrap();
+        assert!(!was_pending);
+    }
+
+    /// PB §6.7 step 1's exception, "paths whose blob equals a render of a
+    /// pending run" — the narrow test that separates this run's own renames
+    /// from a human's uncommitted edit.
+    #[test]
+    fn only_bytes_equal_to_the_staged_render_are_this_runs_own_work() {
+        let root = scratch("staged-match");
+        let staging = Staging::create(&root).unwrap();
+        staging
+            .stage(".spine/ci.sh", b"#!/bin/sh\nrender\n")
+            .unwrap();
+
+        // Not yet renamed into the tree.
+        assert!(!staging.tree_matches_staged(&root, ".spine/ci.sh"));
+
+        fs::create_dir_all(root.join(".spine")).unwrap();
+        fs::write(root.join(".spine/ci.sh"), b"#!/bin/sh\nrender\n").unwrap();
+        assert!(staging.tree_matches_staged(&root, ".spine/ci.sh"));
+
+        // A human's edit over the top is not.
+        fs::write(root.join(".spine/ci.sh"), b"MY UNCOMMITTED WORK\n").unwrap();
+        assert!(!staging.tree_matches_staged(&root, ".spine/ci.sh"));
+
+        // And a path this run staged nothing for is never exempt.
+        assert!(!staging.tree_matches_staged(&root, "README.md"));
     }
 
     /// PB §6.7 step 4's ordering: nothing in the tree moves until every render

@@ -110,16 +110,18 @@ impl Region {
     }
 }
 
-/// Locate the region for `template` in `host`.
+/// Locate the region for `template` in `host`, **at whatever version its
+/// begin marker carries**.
 ///
-/// `expected_version` is `templates[t]` — the record's own template name's
-/// entry, never the region key's.
-pub fn find(
-    host: &[u8],
-    template: &str,
-    expected_version: u64,
-    style: MarkerStyle,
-) -> Result<Region, RegionError> {
+/// MF §3.7: "a region is located by its markers only." The version is on the
+/// marker and is read back in [`Region::version`], but it is not part of
+/// locating: a region whose `@<n>` disagrees with `templates[t]` is still
+/// *there*, and the caller that wants to rewrite it, strip it or compare it
+/// needs to find it first.
+///
+/// [`find`] is this plus the version check, for the callers whose question
+/// really is "is this region at the version I expect".
+pub fn locate(host: &[u8], template: &str, style: MarkerStyle) -> Result<Region, RegionError> {
     let text = match core::str::from_utf8(host) {
         Ok(text) => text,
         // A host file need not be UTF-8; a marker line is ASCII, so scanning
@@ -175,18 +177,39 @@ pub fn find(
         ));
     }
 
-    if version != expected_version {
-        return Err(RegionError::VersionMismatch {
-            found: version,
-            expected: expected_version,
-        });
-    }
-
     Ok(Region {
         start: begin_line_end,
         end: end_line_start,
         version,
     })
+}
+
+/// [`locate`], then the version check.
+///
+/// `expected_version` is `templates[t]` — the record's own template name's
+/// entry, never the region key's.
+///
+/// **Most callers want [`locate`].** A version mismatch is what a template
+/// bump *is*, and the lifecycle's ordinary jobs — rewrite the block, strip it,
+/// compare it against the ancestor's — all have to reach a region whose marker
+/// says `@2` while the binary ships `@3`. Reaching for `find` there turns the
+/// bump into `MarkersMissing`-shaped nothing: an upgrade that refuses a region
+/// byte-identical to what spine wrote, a rollback whose `--force` refusal never
+/// fires, an uninstall that strips a hand-edited block without naming it.
+pub fn find(
+    host: &[u8],
+    template: &str,
+    expected_version: u64,
+    style: MarkerStyle,
+) -> Result<Region, RegionError> {
+    let region = locate(host, template, style)?;
+    if region.version != expected_version {
+        return Err(RegionError::VersionMismatch {
+            found: region.version,
+            expected: expected_version,
+        });
+    }
+    Ok(region)
 }
 
 /// PB §6.7's refusal, verbatim: `init` "never re-creates a region whose

@@ -576,11 +576,47 @@ fn a_path_edited_after_the_upgrade_refuses_until_forced() {
         Some(RestoreRefusal::ModifiedSinceUpgrade { .. })
     ));
 
+    // **The refusal is executed, not merely recorded.** `execute` iterated
+    // every row and acted regardless: `refuses()` existed and nothing
+    // consulted it, so a human's committed work was reverted by a plan that
+    // said it would not be.
+    assert!(rollback::execute(&repo, &target, &plan).is_err());
+    assert_eq!(
+        f.scratch.read(".spine/ci.sh"),
+        "edited after the upgrade\n",
+        "a refused plan writes nothing"
+    );
+
     let forced =
         rollback::compute(&repo, &target, &ancestor, &base, &[".spine/ci.sh".into()]).unwrap();
     assert!(!forced.refuses());
     rollback::execute(&repo, &target, &forced).unwrap();
     assert_eq!(f.scratch.read(".spine/ci.sh"), "old ci\n");
+}
+
+/// PB §6.7's `--force` overrides a **refusal**, so a `--force` that overrides
+/// nothing is refused. Membership in `P` was the old test, and the error text
+/// already described the check that was not being performed.
+///
+/// It is not cosmetic: a spurious `--force` carried into the landing's
+/// `forced=` is `forced-disagrees` at G16 check 10 — MF §6.4, "A path in the
+/// line and not in the set is a claim of an override that did not happen."
+#[test]
+fn forcing_a_path_the_rollback_did_not_refuse_is_refused() {
+    let Some(f) = fixture("force-spurious") else {
+        return;
+    };
+    let repo = f.scratch.repo();
+    let target = rollback::locate(&repo, "HEAD", None).unwrap();
+    let (ancestor, base) = manifests(&f);
+
+    // `unchanged.sh` is in `P` and nobody touched it after the upgrade.
+    let err =
+        rollback::compute(&repo, &target, &ancestor, &base, &["unchanged.sh".into()]).unwrap_err();
+    assert!(
+        err.to_string().contains("unchanged.sh"),
+        "the refusal names the path: {err}"
+    );
 }
 
 /// The union is over `A` and `B`, so a `paths` key `B` gained since the upgrade
@@ -830,11 +866,7 @@ fn refusing_plan(
     let tree = HeadTree { repo };
     // The template versions come from the manifest, never from a constant: a
     // region is located by a marker carrying `templates[t]`, so a closure that
-    // answered `4` for `agents-block` would report `region-version-mismatch`
-    // rather than the divergence these tests are about.
-    let plan = spine_init::plan::compute(&tree, desired, Some(manifest), &|name| {
-        manifest.template_version(name)
-    });
+    let plan = spine_init::plan::compute(&tree, desired, Some(manifest));
     assert!(plan.refuses(), "the premise: a diverged spine-owned path");
     plan
 }

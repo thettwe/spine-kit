@@ -262,9 +262,7 @@ pub fn run(options: &Init) -> Result<u8> {
                 let previous = tree.read(".spine/manifest.json").and_then(|bytes| {
                     spine_manifest::Manifest::parse(&bytes, Some(format_of(&repo))).ok()
                 });
-                plan::compute(&tree, &desired, previous.as_ref(), &|name| {
-                    template_version(name)
-                })
+                plan::compute(&tree, &desired, previous.as_ref())
             }
         }
     };
@@ -307,6 +305,39 @@ pub fn run(options: &Init) -> Result<u8> {
         .and_then(|bytes| spine_template::ReleaseManifest::parse(bytes.as_bytes()).ok())
         .ok_or("a plan that did not refuse implies a release manifest")?;
 
+    // PB §6.7 step 1's precondition. `apply` applies the *pending-run*
+    // exception — it is stated over "a render of a pending run" and only
+    // `apply` knows which run is pending — so what is handed over is every
+    // dirty path this precondition reaches.
+    //
+    // **Untracked files are narrowed to the paths this run would write.**
+    // DERIVED, and from PB §6.7's own argument rather than around it: the
+    // precondition exists because "Spine cannot lose an edit it can see", and
+    // an untracked file at a path no render touches cannot be lost — not by
+    // the upgrade, which writes only its own render set, and not by `--abort`,
+    // which checks out only the paths the two manifests name. Refusing on
+    // every `??` would refuse on a build output or an editor swap file and
+    // make `spine init` unusable in an ordinary repository, which is not a
+    // safety property. A tracked modification anywhere still refuses: that is
+    // the plain reading of "working tree clean", and `--abort`'s totality
+    // claim rests on it.
+    let will_write: Vec<String> = plan
+        .rows
+        .iter()
+        .filter(|r| !matches!(r.action, Action::Skip))
+        .map(|r| {
+            let (file_path, _) = spine_manifest::grammar::split_region(&r.path);
+            file_path.to_string()
+        })
+        .collect();
+    let dirty: Vec<String> = repo
+        .dirty_entries()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|(status, path)| status != "??" || will_write.contains(path))
+        .map(|(_, path)| path)
+        .collect();
+
     let applied = spine_init::apply::apply(
         &root,
         &plan,
@@ -325,6 +356,7 @@ pub fn run(options: &Init) -> Result<u8> {
                 applied,
             )
         },
+        &dirty,
     )?;
 
     for entry in &applied {

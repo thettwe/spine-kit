@@ -122,10 +122,24 @@ impl Repo {
 
     /// Paths the porcelain reports as dirty, so a refusal can name them.
     pub fn dirty_paths(&self) -> Result<Vec<String>> {
+        Ok(self
+            .dirty_entries()?
+            .into_iter()
+            .map(|(_, path)| path)
+            .collect())
+    }
+
+    /// The same, with the porcelain's two status characters kept.
+    ///
+    /// `??` is untracked, and the caller needs to tell it apart: an upgrade
+    /// cannot destroy an untracked file it does not write, and neither can
+    /// `--abort`, which checks out only the paths the two manifests name. See
+    /// `spine init`'s use of this.
+    pub fn dirty_entries(&self) -> Result<Vec<(String, String)>> {
         Ok(run(&self.root, &["status", "--porcelain", "-z"])?
             .split('\0')
             .filter(|entry| entry.len() > 3)
-            .map(|entry| entry[3..].to_string())
+            .map(|entry| (entry[..2].to_string(), entry[3..].to_string()))
             .collect())
     }
 
@@ -543,7 +557,7 @@ mod tests {
             template: "ci-generic@4".into(),
             content: b"#!/bin/sh\n".to_vec(),
         }];
-        let plan = plan::compute(&tree, &desired, None, &|_| Some(4));
+        let plan = plan::compute(&tree, &desired, None);
         assert_eq!(plan.rows.len(), 1);
         assert_eq!(plan.rows[0].action, Action::Create);
         assert_eq!(

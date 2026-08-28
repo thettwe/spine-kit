@@ -481,3 +481,43 @@ mod with_a_release {
         assert!(!scratch.0.join(".spine").exists());
     }
 }
+
+/// PB §6.7 step 1: "**Preconditions.** Working tree clean, except paths whose
+/// blob equals a render of a pending run (the interrupted case, below)."
+///
+/// `Repo::is_clean` and `Repo::dirty_paths` existed with no caller, and `apply`
+/// ran without them. The plan compares **HEAD** blobs — correctly — so a
+/// working-tree edit is invisible to it, and this precondition is the only
+/// thing covering the working tree: uncommitted work was silently overwritten,
+/// with no refusal and no mention in the plan.
+///
+/// It also underwrites `--abort`, whose totality PB argues from the same
+/// sentence: "Because the tree was clean before, abort is total."
+#[test]
+fn an_upgrade_refuses_a_dirty_working_tree_rather_than_overwriting_it() {
+    let Some(scratch) = Scratch::new("dirty-tree") else {
+        return;
+    };
+    if !available() || build_kind(&scratch) != BuildKind::Release {
+        return;
+    }
+    let (code, text) = scratch.init(&[]);
+    assert_eq!(code, 0, "{text}");
+    scratch.commit("spine init");
+
+    // A developer edits a spine-owned path and does not commit it.
+    let work = "MY UNCOMMITTED WORK\n";
+    std::fs::write(scratch.0.join(".spine/ci.sh"), work).unwrap();
+
+    let (code, text) = scratch.init(&[]);
+    assert_ne!(code, 0, "the run must refuse: {text}");
+    assert!(
+        text.contains("working tree is not clean"),
+        "the refusal says why: {text}"
+    );
+    assert_eq!(
+        scratch.read(".spine/ci.sh"),
+        work,
+        "the developer's work survives"
+    );
+}

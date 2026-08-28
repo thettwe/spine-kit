@@ -17,6 +17,7 @@
 
 use crate::plan::{Action, Desired, Plan};
 use crate::staging::{Staging, StagingError};
+use crate::uninstall;
 use spine_manifest::region::{self, MarkerStyle};
 use spine_manifest::schema::Owner;
 use std::fs;
@@ -27,6 +28,9 @@ pub enum ApplyError {
     /// The plan refused. Nothing is written, and this is not an error case so
     /// much as the plan's own answer, carried where a caller cannot ignore it.
     PlanRefused(usize),
+    /// PB §6.7 step 1's precondition: "Working tree clean, except paths whose
+    /// blob equals a render of a pending run."
+    WorkingTreeDirty(Vec<String>),
     Staging(StagingError),
     Io(String),
     /// A region's host file could not be rendered — markers missing, or a
@@ -40,6 +44,12 @@ pub enum ApplyError {
 impl core::fmt::Display for ApplyError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
+            ApplyError::WorkingTreeDirty(paths) => write!(
+                f,
+                "the working tree is not clean; commit or stash first \
+                 (PB §6.7 step 1). Dirty: {}",
+                paths.join(", ")
+            ),
             ApplyError::PlanRefused(n) => write!(
                 f,
                 "the plan refuses {n} path(s); nothing was written \
@@ -75,6 +85,10 @@ pub struct Applied {
 /// the blobs of what was written, so it cannot be built until the renders are
 /// known — and it must still be *recorded in staging before any rename*, which
 /// is why it is built at the top and written to the tree at the bottom.
+/// `dirty` is PB §6.7 **step 1**: the working tree's dirty paths as git
+/// reports them, unfiltered. The caller measures it (`Repo::dirty_paths`) and
+/// this function applies the exception and refuses, so the precondition is
+/// enforced where the writes are rather than wherever someone remembers.
 pub fn apply(
     repo_root: &Path,
     plan: &Plan,
@@ -82,7 +96,29 @@ pub fn apply(
     object_format: spine_canon::ObjectFormat,
     template_version: &dyn Fn(&str) -> Option<u64>,
     manifest_bytes: &dyn Fn(&[Applied]) -> Vec<u8>,
+    dirty: &[String],
 ) -> Result<Vec<Applied>, ApplyError> {
+    // ---- PB §6.7 step 1. --------------------------------------------------
+    //
+    // "**Preconditions.** Working tree clean, except paths whose blob equals a
+    // render of a pending run (the interrupted case, below)."
+    //
+    // `Repo::is_clean` and `Repo::dirty_paths` existed and had no caller
+    // outside their own unit test, and this ran without them. The plan
+    // compares **HEAD** blobs — correctly, per PB — so a working-tree edit is
+    // invisible to it, and step 1 is the only thing covering the working tree:
+    // an uncommitted edit to a spine-owned path was silently overwritten, with
+    // no refusal and no mention in the plan. PB §6.7's own claim is the one
+    // this restores — "Spine cannot lose an edit it can see, and it sees every
+    // edit because it knows exactly what it wrote."
+    //
+    // It also underwrites `--abort`: "Because the tree was clean before, abort
+    // is total."
+    //
+    // The exception is applied below, after staging is known, because it is
+    // stated over "a render of **a pending run**" and there is no such render
+    // until one is.
+
     // PB §6.7 step 3: "Refusal is the default. One `spine-owned` path with HEAD
     // blob ≠ manifest blob stops the whole upgrade — a partial upgrade is the
     // interrupted case by another name." So this is checked before a directory
@@ -92,7 +128,31 @@ pub fn apply(
         return Err(ApplyError::PlanRefused(refused));
     }
 
-    let staging = Staging::create(repo_root)?;
+    // PB §6.7, *Interrupted upgrade*: each of the three crash states is
+    // "fixed by **re-running `spine init`**". Adopting the pending run is what
+    // makes the re-run the fix rather than a second refusal.
+    let (staging, resumed) = Staging::resume_or_create(repo_root)?;
+    if resumed {
+        eprintln!(
+            "spine init: continuing the interrupted run {} (PB §6.7)",
+            staging.run
+        );
+    }
+
+    // PB §6.7 step 1's exception, narrow on purpose: "**except paths whose
+    // blob equals a render of a pending run**". Only a resumed run has such
+    // renders — on a fresh run nothing is exempt — and only a path whose bytes
+    // in the tree *equal what that run staged* is this run's own work rather
+    // than a human's edit. Anything looser exempts the very edit the
+    // precondition exists to protect.
+    let unexplained: Vec<String> = dirty
+        .iter()
+        .filter(|path| !(resumed && staging.tree_matches_staged(repo_root, path)))
+        .cloned()
+        .collect();
+    if !unexplained.is_empty() {
+        return Err(ApplyError::WorkingTreeDirty(unexplained));
+    }
 
     // ---- Render into staging. Nothing in the tree moves. ------------------
     //
@@ -132,7 +192,15 @@ pub fn apply(
                     why: "a region body must be UTF-8".into(),
                 })?;
 
-                let rendered = if region::find(&host, template, version, style).is_ok() {
+                // **`locate`, not `find`** (MF §3.7). The question here is
+                // "is there a block to replace", and a template bump is
+                // exactly the case where there is one and its `@<n>` differs
+                // — which is what the upgrade is about to change. Pinned to
+                // the new version, this took the `create_in` branch and
+                // **appended a second block**, which is
+                // `region-markers-malformed` at G16 check 9 on every landing
+                // afterwards.
+                let rendered = if region::locate(&host, template, style).is_ok() {
                     spine_template::regions::replace_in(&host, template, version, body)
                 } else {
                     spine_template::regions::create_in(&host, template, version, body)
@@ -192,10 +260,37 @@ pub fn apply(
     // `user-modified` paths are left in place and reported — spine never
     // removes bytes a human owns.
     for row in &plan.rows {
-        if row.action == Action::Delete && row.owner == Owner::SpineOwned {
-            let (file_path, _) = spine_manifest::grammar::split_region(&row.path);
-            fs::remove_file(repo_root.join(file_path))
-                .map_err(|e| ApplyError::Io(e.to_string()))?;
+        if row.owner != Owner::SpineOwned {
+            continue;
+        }
+        let (file_path, _) = spine_manifest::grammar::split_region(&row.path);
+        match row.action {
+            Action::Delete => {
+                fs::remove_file(repo_root.join(file_path))
+                    .map_err(|e| ApplyError::Io(e.to_string()))?;
+            }
+            // MF §3.7: a region is "a block inside a file spine does not
+            // own", so retiring one takes out the block and leaves the file.
+            // This path used to `remove_file` the host — the human's whole
+            // agent-context file, which is also a `paths.agent_context` floor
+            // path — for a retired region template.
+            Action::StripRegion => {
+                // `template` is `<name>@<version>`; the marker carries the
+                // name alone (MF §3.6, §3.7).
+                let Some(template) = row.template.as_deref().and_then(|t| t.split('@').next())
+                else {
+                    continue;
+                };
+                let Some(style) = MarkerStyle::for_template(template) else {
+                    continue;
+                };
+                let host = fs::read(repo_root.join(file_path)).unwrap_or_default();
+                if let Some(stripped) = uninstall::strip_region(&host, template, style) {
+                    fs::write(repo_root.join(file_path), stripped)
+                        .map_err(|e| ApplyError::Io(e.to_string()))?;
+                }
+            }
+            _ => {}
         }
     }
 
@@ -206,12 +301,40 @@ pub fn apply(
     // this line leaves interrupted state 2 — files renamed, manifest old —
     // which a re-run recognises by hash. A crash after it but before the
     // discard leaves state 3.
-    let manifest_path = repo_root.join(".spine/manifest.json");
-    if let Some(parent) = manifest_path.parent() {
-        fs::create_dir_all(parent).map_err(|e| ApplyError::Io(e.to_string()))?;
+    //
+    // **Through staging, like every other render.** PB §6.7 step 4: "each file
+    // then **moves into place by atomic rename**", and the manifest is a file.
+    // A plain `fs::write` can be torn by a crash, and MF §3.11 makes a
+    // malformed manifest at `B` refuse every run before any gate — "policy
+    // could not be read (PB §7.4 rule 1), and the exit is `refused`, not a
+    // gate finding". Combined with a re-run that refuses while staging exists,
+    // that is a repository nothing but a hand-run `git checkout` recovers.
+    //
+    // Staging it also runs `validate_parseable`, so a manifest that does not
+    // parse never reaches `.spine/` at all.
+    staging.stage(MANIFEST_PATH, &manifest)?;
+    staging.apply_one(repo_root, MANIFEST_PATH)?;
+
+    // ---- PB §6.7 step 6: "The graph cache is deleted." -------------------
+    //
+    // "Schema migration is *nothing*: `spine index` rebuilds under the new
+    // schema. This is the iron rule paying rent." Nothing executed it, so a
+    // repository upgraded across a `schema` bump kept a cache the new binary
+    // reads under the old one. Absent is fine — a repository that never
+    // indexed has none.
+    let graph = repo_root.join(GRAPH_CACHE);
+    if graph.exists() {
+        fs::remove_file(&graph).map_err(|e| ApplyError::Io(e.to_string()))?;
     }
-    fs::write(&manifest_path, &manifest).map_err(|e| ApplyError::Io(e.to_string()))?;
 
     staging.discard()?;
     Ok(applied)
 }
+
+/// MF §3, not configurable.
+const MANIFEST_PATH: &str = ".spine/manifest.json";
+
+/// PB §6.7 step 6's target. `uninstall::execute` removes the whole
+/// `.spine/cache/` directory; an upgrade keeps the directory (staging lives
+/// under it) and takes the cache file.
+const GRAPH_CACHE: &str = ".spine/cache/graph.sqlite";

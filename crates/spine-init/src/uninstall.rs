@@ -156,6 +156,19 @@ pub fn compute(tree: &dyn TreeSource, base: &Manifest) -> Result<UninstallPlan, 
         if is_region && record.owner == Owner::UserOwned {
             return Err(UninstallError::UserOwnedRegion(record.path.clone()));
         }
+        // **Front-loaded, like `apply`'s refusal.** `execute` raised this
+        // mid-walk, with the manifest removed last, so a repository could be
+        // left half-uninstalled with its manifest intact — PB §6.7 step 3's
+        // "a partial upgrade is the interrupted case by another name", and a
+        // state MF §6.8 has no verdict for. Every reason `execute` can fail on
+        // a row is decidable here, before a byte moves.
+        if is_region {
+            let template = record.template.as_ref().map(|(name, _)| name.as_str());
+            let resolvable = template.is_some_and(|t| MarkerStyle::for_template(t).is_some());
+            if !resolvable {
+                return Err(UninstallError::UnknownRegionTemplate(record.path.clone()));
+            }
+        }
 
         let action = match (is_region, record.owner) {
             // "every managed region" — MF §6.8's clause is not qualified by
@@ -195,9 +208,16 @@ fn current_blob(tree: &dyn TreeSource, record: &spine_manifest::FileRecord) -> O
     match &record.region {
         None => Some(tree.hash_object_filtered(&record.file_path, &host)),
         Some(_) => {
-            let (name, version) = record.template.as_ref()?;
+            let (name, _version) = record.template.as_ref()?;
             let style = MarkerStyle::for_template(name)?;
-            let found = region::find(&host, name, *version, style).ok()?;
+            // **`locate`, not `find`** (MF §3.7). The version-pinned lookup
+            // made a hand-edited `@99` read as `Missing` rather than
+            // `Modified`, so `deleted_but_modified()` counted zero and PB
+            // §6.7's rule — an uninstall names "each deleted-but-modified
+            // path in its output" — failed precisely on the hand-edited case
+            // it exists for. The block was stripped either way; only the
+            // loudness was lost.
+            let found = region::locate(&host, name, style).ok()?;
             Some(spine_canon::git_blob_id(
                 found.bytes(&host),
                 tree.object_format(),
@@ -285,12 +305,26 @@ fn begin_prefix(style: MarkerStyle, template: &str) -> String {
 /// because check 9 compares it; an uninstall does not care what version the
 /// markers claim, only that none of them survives (MF §3.7's "marker-free").
 /// A host whose marker was hand-edited to `@99` must still come out clean.
+/// **Every** block, not the first. MF §6.8 is outright — "every managed region
+/// listed in `M_B` is marker-free in `T`" — and §3.7 defines marker-free as
+/// "the host file contains **neither** marker line for `t`". A host carrying
+/// the block twice (a copy-paste, the same shape `region::find` calls
+/// `region-markers-malformed`) came out with one pair of markers still in it,
+/// which is `uninstall-region-remains` at G16, outright, on the uninstall
+/// landing itself.
 pub fn strip_region(host: &[u8], template: &str, style: MarkerStyle) -> Option<Vec<u8>> {
-    let (start, end) = block_range(host, template, style)?;
-    let mut out = Vec::with_capacity(host.len());
-    out.extend_from_slice(&host[..start]);
-    out.extend_from_slice(&host[end..]);
-    Some(out)
+    let mut out: Vec<u8> = host.to_vec();
+    let mut stripped_any = false;
+    // Each pass removes one block and shortens the host, so the next pass
+    // re-scans what is left. A block whose markers are nested inside another's
+    // cannot arise — `block_range` takes the first end after the first begin —
+    // and the loop terminates because every pass removes at least the begin
+    // line.
+    while let Some((start, end)) = block_range(&out, template, style) {
+        out.drain(start..end);
+        stripped_any = true;
+    }
+    stripped_any.then_some(out)
 }
 
 /// The byte range of a managed **block** — from the begin marker's first byte
@@ -354,6 +388,41 @@ mod tests {
         // ...and the uninstall removes it anyway, which is §6.8's.
         let stripped = strip_region(host, "agents-block", MarkerStyle::Html).unwrap();
         assert_eq!(stripped, b"x\ny\n");
+    }
+
+    /// MF §6.8 is outright — "every managed region listed in `M_B` is
+    /// marker-free in `T`" — and §3.7 defines marker-free as "the host file
+    /// contains **neither** marker line for `t`".
+    ///
+    /// A copy-pasted block came out with one pair of markers still in it,
+    /// which is `uninstall-region-remains` at G16, outright, on the uninstall
+    /// landing itself. Nothing warned or refused.
+    #[test]
+    fn a_duplicated_block_is_stripped_in_full() {
+        let host = b"top\n\
+<!-- spine:begin agents-block@2 -->\nfirst\n<!-- spine:end -->\n\
+middle\n\
+<!-- spine:begin agents-block@2 -->\nsecond\n<!-- spine:end -->\n\
+bottom\n";
+        let stripped = strip_region(host, "agents-block", MarkerStyle::Html).unwrap();
+        assert_eq!(stripped, b"top\nmiddle\nbottom\n");
+        assert!(region::is_marker_free(
+            &stripped,
+            "agents-block",
+            MarkerStyle::Html
+        ));
+    }
+
+    /// And the two copies need not agree on version, since a hand-edit is how
+    /// a second one gets there in the first place.
+    #[test]
+    fn two_blocks_at_different_versions_both_come_out() {
+        let host = b"a\n\
+<!-- spine:begin agents-block@2 -->\nx\n<!-- spine:end -->\n\
+<!-- spine:begin agents-block@99 -->\ny\n<!-- spine:end -->\n\
+b\n";
+        let stripped = strip_region(host, "agents-block", MarkerStyle::Html).unwrap();
+        assert_eq!(stripped, b"a\nb\n");
     }
 
     /// The hash-comment style, so `.gitignore` and `.gitattributes` are not
@@ -427,6 +496,53 @@ mod tests {
             1,
             "MF §6.8 is outright: an uninstall that left it behind is refused"
         );
+    }
+
+    /// PB §6.7: an uninstall removes every `spine-owned` path "whatever their
+    /// blobs — **naming each deleted-but-modified path in its output**".
+    ///
+    /// A **region** hand-edited to a different `@<n>` was located with the
+    /// record's version, so the lookup failed, the state read `Missing` rather
+    /// than `Modified`, and the count was zero. The block was stripped either
+    /// way — the loudness rule failed precisely on the hand-edited case it
+    /// exists for.
+    #[test]
+    fn a_hand_edited_region_is_stripped_and_named() {
+        let recorded = spine_canon::git_blob_id(b"managed\n", ObjectFormat::Sha1);
+        let base = manifest_with(&format!(
+            "{{\"blob\":\"{recorded}\",\"owner\":\"spine-owned\",\"path\":\"AGENTS.md#spine\",\
+             \"template\":\"agents-block@2\"}}"
+        ));
+        // Marker hand-edited to `@99`, body hand-tuned.
+        let host = b"# Notes\n<!-- spine:begin agents-block@99 -->\nhand tuned\n\
+<!-- spine:end -->\n";
+        let tree = Tree(vec![("AGENTS.md".into(), host.to_vec())]);
+        let plan = compute(&tree, &base).unwrap();
+
+        assert_eq!(plan.rows[0].action, UninstallAction::StripRegion);
+        assert_eq!(plan.rows[0].state, State::Modified);
+        assert_eq!(plan.deleted_but_modified().count(), 1);
+    }
+
+    /// PB §6.7 step 3 governs an uninstall too — step 5 makes it "an upgrade
+    /// with … `to=none`" — and "a partial upgrade is the interrupted case by
+    /// another name".
+    ///
+    /// `execute` raised this mid-walk, with the manifest removed last, so a
+    /// repository could be left half-uninstalled with its manifest intact:
+    /// a state MF §6.8 has no verdict for.
+    #[test]
+    fn a_region_whose_template_has_no_marker_style_refuses_before_anything_moves() {
+        let recorded = spine_canon::git_blob_id(b"x\n", ObjectFormat::Sha1);
+        let base = manifest_with(&format!(
+            "{{\"blob\":\"{recorded}\",\"owner\":\"spine-owned\",\"path\":\"zzz.md#spine\",\
+             \"template\":\"intent@2\"}}"
+        ));
+        let tree = Tree(vec![("zzz.md".into(), b"x\n".to_vec())]);
+        assert!(matches!(
+            compute(&tree, &base),
+            Err(UninstallError::UnknownRegionTemplate(_))
+        ));
     }
 
     /// "leaves `user-owned` and `user-modified` files in place (reported)".
