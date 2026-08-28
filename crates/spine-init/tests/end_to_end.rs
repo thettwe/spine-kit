@@ -80,6 +80,58 @@ impl Scratch {
     fn read(&self, path: &str) -> String {
         std::fs::read_to_string(self.0.join(path)).unwrap_or_default()
     }
+
+    /// The manifest's `files[].path` list, in the order it stores them.
+    ///
+    /// Read with a scan rather than a JSON parser: the manifest is canonical
+    /// JCS on one line, and these tests want the recorded members, not a
+    /// second parser's opinion of them.
+    fn manifest_paths(&self) -> Vec<String> {
+        self.manifest_records()
+            .into_iter()
+            .map(|(path, ..)| path)
+            .collect()
+    }
+
+    /// `(blob, owner, base)` for one record.
+    fn manifest_record(&self, path: &str) -> Option<(String, String, Option<String>)> {
+        self.manifest_records()
+            .into_iter()
+            .find(|(p, ..)| p == path)
+            .map(|(_, blob, owner, base)| (blob, owner, base))
+    }
+
+    fn manifest_blob(&self, path: &str) -> Option<String> {
+        self.manifest_record(path).map(|(blob, ..)| blob)
+    }
+
+    fn manifest_records(&self) -> Vec<(String, String, String, Option<String>)> {
+        let text = self.read(".spine/manifest.json");
+        let Some(start) = text.find(r#""files":["#) else {
+            return Vec::new();
+        };
+        let rest = &text[start + r#""files":["#.len()..];
+        let Some(end) = rest.find(']') else {
+            return Vec::new();
+        };
+        rest[..end]
+            .split("},{")
+            .filter_map(|record| {
+                let member = |name: &str| {
+                    let needle = format!("\"{name}\":\"");
+                    let at = record.find(&needle)? + needle.len();
+                    let len = record[at..].find('"')?;
+                    Some(record[at..at + len].to_string())
+                };
+                Some((
+                    member("path")?,
+                    member("blob")?,
+                    member("owner")?,
+                    member("base"),
+                ))
+            })
+            .collect()
+    }
 }
 
 impl Drop for Scratch {
@@ -519,5 +571,118 @@ fn an_upgrade_refuses_a_dirty_working_tree_rather_than_overwriting_it() {
         scratch.read(".spine/ci.sh"),
         work,
         "the developer's work survives"
+    );
+}
+
+/// PB §6.7's idempotence claim, in the member it is about: "On an initialised
+/// repo, `init` is idempotent."
+///
+/// `files[]` was built from what the run *wrote*, so a re-run that skips
+/// everything — the ordinary case on an initialised repository — wrote a
+/// manifest with **no records at all**. Every path then reads `foreign` on the
+/// next run, `spine-owned` + foreign is a refusal, and G16 check 9 has nothing
+/// left to check.
+#[test]
+fn an_idempotent_re_run_keeps_every_record() {
+    let Some(scratch) = Scratch::new("idempotent-records") else {
+        return;
+    };
+    if !available() || build_kind(&scratch) != BuildKind::Release {
+        return;
+    }
+    let (code, text) = scratch.init(&[]);
+    assert_eq!(code, 0, "{text}");
+    let first = scratch.manifest_paths();
+    assert_eq!(first.len(), 5, "the seed render set: {first:?}");
+    scratch.commit("spine init");
+
+    let (code, text) = scratch.init(&[]);
+    assert_eq!(code, 0, "{text}");
+    assert_eq!(
+        scratch.manifest_paths(),
+        first,
+        "a re-run that writes nothing still records everything it claims"
+    );
+}
+
+/// PB §6.7 step 3's three exits, which `resolve` implemented and the CLI never
+/// called: the flags were parsed and ignored, so a diverged `spine-owned` path
+/// refused and `--force` did nothing.
+///
+/// MF §3.5 on what `--adopt` lands: "reclassification is `--adopt` or a
+/// successful `--merge`, and it lands as a manifest change like any other" —
+/// `owner: user-modified`, and a `base`, "the pristine render the human
+/// diverged from".
+#[test]
+fn adopt_reclassifies_the_record_and_leaves_the_bytes() {
+    let Some(scratch) = Scratch::new("adopt-records") else {
+        return;
+    };
+    if !available() || build_kind(&scratch) != BuildKind::Release {
+        return;
+    }
+    assert_eq!(scratch.init(&[]).0, 0);
+    scratch.commit("spine init");
+    let render = scratch.manifest_blob(".spine/ci.sh").expect("recorded");
+
+    let tuned = "#!/bin/sh\n# HAND TUNED\n";
+    std::fs::write(scratch.0.join(".spine/ci.sh"), tuned).unwrap();
+    scratch.commit("hand edit");
+
+    // Without an exit, the divergence refuses.
+    let (code, text) = scratch.init(&[]);
+    assert_eq!(code, 2, "{text}");
+    assert!(text.contains("--merge, --adopt, --force"), "{text}");
+
+    let (code, text) = scratch.init(&["--adopt", ".spine/ci.sh"]);
+    assert_eq!(code, 0, "{text}");
+    assert!(text.contains("user-modified"), "{text}");
+    assert_eq!(
+        scratch.read(".spine/ci.sh"),
+        tuned,
+        "adopt writes nothing: spine stops writing the path"
+    );
+
+    let record = scratch
+        .manifest_record(".spine/ci.sh")
+        .expect("still recorded");
+    assert_eq!(record.1, "user-modified");
+    assert_eq!(
+        record.2.as_deref(),
+        Some(render.as_str()),
+        "base is the pristine render the human diverged from"
+    );
+    // MF §3.5: "`blob` is git's own hash of **what spine wrote**" — not the
+    // human's edit, whose bytes `user-modified` checks nothing about.
+    assert_eq!(record.0, render);
+}
+
+/// The other two exits, on the same divergence.
+#[test]
+fn force_overwrites_and_merge_reclassifies() {
+    let Some(scratch) = Scratch::new("force-and-merge") else {
+        return;
+    };
+    if !available() || build_kind(&scratch) != BuildKind::Release {
+        return;
+    }
+    assert_eq!(scratch.init(&[]).0, 0);
+    scratch.commit("spine init");
+    let render = scratch.read(".spine/ci.sh");
+
+    std::fs::write(scratch.0.join(".spine/ci.sh"), "#!/bin/sh\n# HAND TUNED\n").unwrap();
+    scratch.commit("hand edit");
+
+    let (code, text) = scratch.init(&["--force", ".spine/ci.sh"]);
+    assert_eq!(code, 0, "{text}");
+    assert_eq!(
+        scratch.read(".spine/ci.sh"),
+        render,
+        "--force is the overwrite exit"
+    );
+    assert_eq!(
+        scratch.manifest_record(".spine/ci.sh").unwrap().1,
+        "spine-owned",
+        "--force reclassifies nothing"
     );
 }

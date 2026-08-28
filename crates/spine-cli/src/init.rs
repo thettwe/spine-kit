@@ -8,6 +8,7 @@
 //! bad release is worse than one not scaffolded at all."
 
 use spine_init::plan::{self, Action, Desired, TreeSource};
+use spine_init::resolve::{self, Reclassification, Resolutions};
 use spine_init::{HeadTree, Repo};
 use spine_manifest::schema::Owner;
 use spine_template::constitution;
@@ -237,6 +238,15 @@ pub fn run(options: &Init) -> Result<u8> {
     }
 
     // CI §3.4 step 1: "Validate first … **before any plan is computed**."
+    //
+    // `previous` is lifted out of the match because the resolution step below
+    // needs it too: `--merge`'s three-way runs against the record's `base`,
+    // and a reclassified record carries its owner forward.
+    let previous = {
+        let tree = HeadTree { repo: &repo };
+        tree.read(".spine/manifest.json")
+            .and_then(|bytes| spine_manifest::Manifest::parse(&bytes, Some(format_of(&repo))).ok())
+    };
     let plan = match &release {
         None => plan::development_build_plan(&desired),
         Some(_) => {
@@ -259,13 +269,57 @@ pub fn run(options: &Init) -> Result<u8> {
                 // Read from HEAD and not the working tree, for the reason the
                 // rest of the plan is: an uncommitted manifest is not what the
                 // last completed run landed.
-                let previous = tree.read(".spine/manifest.json").and_then(|bytes| {
-                    spine_manifest::Manifest::parse(&bytes, Some(format_of(&repo))).ok()
-                });
                 plan::compute(&tree, &desired, previous.as_ref())
             }
         }
     };
+
+    // ---- PB §6.7 step 3's three exits. ------------------------------------
+    //
+    // "Refusal is the default … The exits are `--merge` (three-way against the
+    // recorded blob), `--adopt` (spine stops writing it) and `--force`
+    // (overwrite)."
+    //
+    // `resolve` existed and had no caller: the three flags were parsed and
+    // ignored, so a diverged `spine-owned` path refused and `--force` did
+    // nothing. A plan that refuses is the *input* to this step, so it runs
+    // before the refusal report below.
+    let resolutions = Resolutions {
+        merge: options.merge,
+        adopt: options.adopt.clone(),
+        force: options.force.clone(),
+    };
+    let asked_to_resolve =
+        resolutions.merge || !resolutions.adopt.is_empty() || !resolutions.force.is_empty();
+
+    let (plan, desired, reclassified, forced) = if asked_to_resolve {
+        match resolve::resolve(&repo, &plan, &desired, previous.as_ref(), &resolutions) {
+            Ok(r) => {
+                for entry in &r.reclassified {
+                    println!(
+                        "{} {} → user-modified (base {})",
+                        entry.by.token(),
+                        entry.path,
+                        &entry.base[..12.min(entry.base.len())]
+                    );
+                }
+                for path in &r.forced {
+                    println!("force {path} → overwritten");
+                }
+                (r.plan, r.desired, r.reclassified, r.forced)
+            }
+            Err(e) => {
+                eprintln!("spine init: {e}");
+                return Ok(exit::REFUSED);
+            }
+        }
+    } else {
+        (plan, desired, Vec::new(), Vec::new())
+    };
+    // MF §6.4's `forced=` is the landing's, and no lifecycle landing exists
+    // yet (PB §6.7 step 5). Held rather than dropped so that wiring the
+    // landing does not have to re-derive it.
+    let _ = &forced;
 
     print_plan(&plan, options.status);
 
@@ -354,6 +408,9 @@ pub fn run(options: &Init) -> Result<u8> {
                 options.isolation.as_deref(),
                 &langs,
                 applied,
+                &plan,
+                previous.as_ref(),
+                &reclassified,
             )
         },
         &dirty,
@@ -385,15 +442,53 @@ fn build_manifest(
     isolation: Option<&str>,
     langs: &[String],
     applied: &[spine_init::Applied],
+    plan: &plan::Plan,
+    previous: Option<&spine_manifest::Manifest>,
+    reclassified: &[Reclassification],
 ) -> Vec<u8> {
-    let files = applied
+    // **Every path the run still claims, not only the ones it wrote.**
+    //
+    // `files[]` was built from `applied` alone, so a path the plan *skipped*
+    // — an unchanged render, an adopted one — dropped out of the manifest.
+    // On an idempotent re-run of an initialised repository, which is PB §6.7's
+    // ordinary case and skips everything, that emptied `files[]` completely:
+    // every path then reads `foreign` on the next run (present in HEAD,
+    // claimed by no record), and G16 check 9 has nothing left to check.
+    //
+    // A row the plan retires — `Delete`, `StripRegion` — is correctly absent:
+    // build plan B7 is what puts it there, and leaving the manifest is what
+    // retiring means.
+    let files = plan
+        .rows
         .iter()
-        .map(|entry| spine_manifest::FileEntry {
-            path: entry.path.clone(),
-            owner: owner_of(&entry.path),
-            blob: entry.blob.clone(),
-            template: Some(template_of(&entry.path).to_string()),
-            base: None,
+        .filter(|row| !matches!(row.action, Action::Delete | Action::StripRegion))
+        .filter_map(|row| {
+            let (owner, base) = ownership(&row.path, previous, reclassified);
+            // MF §3.5: "**`blob` is git's own hash of what spine wrote**". So:
+            // what this run wrote, else what the last run recorded, and only
+            // then what happens to be at the path.
+            //
+            // The middle term is the one that matters for a class whose bytes
+            // a human owns. An adopted path's `blob` is the render spine last
+            // wrote, not the human's current edit — `user-modified` checks
+            // "nothing about its bytes" (MF §3.5), so recording the edit would
+            // put a value in a frozen member that describes nothing and moves
+            // every time the human saves. For `spine-owned` the three agree
+            // whenever the row skipped, which is the only time the middle term
+            // is reached.
+            let blob = applied
+                .iter()
+                .find(|a| a.path == row.path)
+                .map(|a| a.blob.clone())
+                .or_else(|| row.manifest_blob.clone())
+                .or_else(|| row.head_blob.clone())?;
+            Some(spine_manifest::FileEntry {
+                path: row.path.clone(),
+                owner,
+                blob,
+                template: Some(template_of(&row.path).to_string()),
+                base,
+            })
         })
         .collect();
 
@@ -441,6 +536,37 @@ fn format_of(repo: &Repo) -> spine_canon::ObjectFormat {
 }
 
 /// PB §6.7's three ownership classes, by path.
+/// A record's `owner`, and its `base` where MF §3.5 gives it one.
+///
+/// Three sources, in this order, and the order is the rule:
+///
+/// 1. **This run's reclassification.** MF §3.5: "reclassification is `--adopt`
+///    or a successful `--merge`, and it lands as a manifest change like any
+///    other." Both exits move the path to `user-modified` and give it a
+///    `base`, "the pristine render the human diverged from, updated on every
+///    `--merge`".
+/// 2. **The previous manifest.** A class an earlier run recorded is a fact
+///    about the repository, not about this binary's table — an `--adopt`ed
+///    path that reverted to `spine-owned` on the next `init` would be spine
+///    resuming ownership of a file it was told to stop writing.
+/// 3. **The seed table**, for a path no manifest has yet claimed.
+///
+/// Only (3) existed, so (1) could not be recorded even once `resolve` was
+/// wired in, and (2) silently undid every past reclassification.
+fn ownership(
+    path: &str,
+    previous: Option<&spine_manifest::Manifest>,
+    reclassified: &[Reclassification],
+) -> (Owner, Option<String>) {
+    if let Some(entry) = reclassified.iter().find(|r| r.path == path) {
+        return (entry.owner, Some(entry.base.clone()));
+    }
+    if let Some(record) = previous.and_then(|m| m.files().into_iter().find(|f| f.path == path)) {
+        return (record.owner, record.base.clone());
+    }
+    (owner_of(path), None)
+}
+
 fn owner_of(path: &str) -> Owner {
     match path {
         // "spine once (seed), humans after. Never touched again."
