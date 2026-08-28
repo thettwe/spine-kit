@@ -19,11 +19,16 @@
 use core::fmt;
 
 use crate::gate::Gate;
+use crate::git_version;
 use crate::report::Report;
 use crate::vocab::{
-    AutoMerge, Event, LandingShape, Mode, PreconditionStatus, SealProfile, WireClass, WireKind,
+    AutoMerge, Event, LandingShape, Mode, PreconditionStatus, SealProfile, Threat, WireClass,
+    WireKind,
 };
 use crate::wire::Wire;
+use spine_canon::ObjectFormat;
+
+use crate::gate::TokenShape;
 use crate::{KindRule, WireClassRule};
 
 /// GR §2.2 / §7 rule 7: "Integers only, `0 ≤ n ≤ 2^53 − 1`."
@@ -94,6 +99,56 @@ pub enum Invariant {
     /// GR §5.8: the rule-5 wire "attaches to every landing rule 5 applies to",
     /// and is raised iff auto-merge is off or a precondition is unmet.
     RuleFiveWirePresence { expected: bool },
+    /// GR §5.6: `gates[]` "sorts by gate number ascending", and §5.6.1 makes
+    /// `Spine-Gates` "a rendering of this array, **in the same order**".
+    ///
+    /// The serializer sorts, so an unsorted array reaches `report=` sorted and
+    /// the trailer rendered in the caller's order — one value, two renderings,
+    /// and the one that reaches `envelope=` is the wrong one.
+    GatesOutOfOrder,
+    /// GR §5.8's precondition 0: "`C-A3: threat.candidate == \"trusted\"`",
+    /// marked **R** — both sides are members of this report.
+    ///
+    /// PB §11, quoted at §5.8: it "fails on every run that tests anything, so
+    /// the `G11` precondition wire is present in every such set, in every
+    /// lane." Unchecked, a hostile-threat repository could serialize
+    /// `effective: true`, and because the rule-5 wire check derives from this
+    /// same array the two errors cancelled.
+    PreconditionZeroDisagreesWithCA3,
+    /// GR §5.8's precondition 1: the boundary "the ingested header's `profile=`
+    /// equals it" — `met` requires `profile: "container"`.
+    PreconditionOneDisagreesWithProfile,
+    /// GR §5.9's fixed shape for a landing that ingested no result file:
+    /// "`evidence` is **absent** … `profile` is **`"none"`** …
+    /// `automerge.preconditions[1].status` and `[2].status` are **`"unmet"`**".
+    ///
+    /// RF §8.4 is the reason: "a seal must never claim a boundary no header
+    /// established."
+    NoEvidenceShape { member: &'static str },
+    /// GR §6.3's token-shape column, which fixes the shape per row: G3 is
+    /// "bare `G3` … there is nothing to put after the colon"; G5 is
+    /// "`G5:<path>`"; G8 is "`G8:` + `tok(path)`, **always**"; G13 is "`G13:`
+    /// + the commit oid".
+    ///
+    /// §6.3's own preamble states the harm for `class` and it is as true here:
+    /// a gate whose token two implementations spell differently produces "a
+    /// different `wires` array, a different `report=` and a different
+    /// `envelope=` over identical facts", and a review naming the conforming
+    /// token does not contain the other.
+    WireTokenShapeDisagreesWith63 { gate: Gate },
+    /// GR §5.3: `git_version` is "`\"<major>.<minor>\"`, e.g. `\"2.45\"`
+    /// … **The parse is normative, because a mis-parse forks both the digest
+    /// and §3.3's `wrong-git` check.**"
+    GitVersionNotMajorMinor,
+    /// GR §5.5: `signoff` is "Present iff a `Spine-Signoff` binds this
+    /// landing", and "A landing with none is a **signerless** landing — every
+    /// quick-lane landing that copies no `Spine-Upgrade`, **every reseal**, and
+    /// an orphaned tombstone."
+    ///
+    /// It is not cosmetic: `self_approved` is derived against the sign-off's
+    /// fingerprint, so a `signoff` that should not be there flips the fact
+    /// PB §11's signerless overlay turns on.
+    SignoffOnAReseal,
 }
 
 impl fmt::Display for Invariant {
@@ -164,6 +219,28 @@ impl fmt::Display for Invariant {
                 f,
                 "rule-five-wire-presence: a bare G11 advisory {} be in this set",
                 if *expected { "must" } else { "must not" }
+            ),
+            Invariant::GatesOutOfOrder => f.write_str(
+                "gates-out-of-order: gates[] sorts by gate number, and Spine-Gates renders                  that order",
+            ),
+            Invariant::PreconditionZeroDisagreesWithCA3 => f.write_str(
+                "precondition-zero-disagrees-with-c-a3: precondition 0 is met iff c_a3 is trusted",
+            ),
+            Invariant::PreconditionOneDisagreesWithProfile => f.write_str(
+                "precondition-one-disagrees-with-profile: precondition 1 is met iff profile is                  container",
+            ),
+            Invariant::NoEvidenceShape { member } => write!(
+                f,
+                "no-evidence-shape: {member} disagrees with GR §5.9's shape for a landing that                  ingested no result file"
+            ),
+            Invariant::WireTokenShapeDisagreesWith63 { gate } => {
+                write!(f, "wire-token-shape-disagrees-with-6-3: {gate}")
+            }
+            Invariant::GitVersionNotMajorMinor => f.write_str(
+                "git-version-not-major-minor: run.git_version is \"<major>.<minor>\"",
+            ),
+            Invariant::SignoffOnAReseal => f.write_str(
+                "signoff-on-a-reseal: a reseal is a signerless landing and binds no Spine-Signoff",
             ),
         }
     }
@@ -243,13 +320,50 @@ impl Report {
         }
 
         // GR §5.8's exemption is the tombstone's alone, and it is all-or-none:
-        // "all five `exempt`".
-        let any_exempt = self
+        // "a **tombstone** is exempt from the rule entirely — all five
+        // `"exempt"`, `profile: "n/a"`". The check was `contains(&Exempt)`,
+        // which is *any*, and its own comment already said "all five": a
+        // tombstone with one exempt and four unmet validated clean and
+        // serialized `effective: false` where §5.8 requires `true`.
+        let exempt_count = self
             .automerge
             .preconditions
-            .contains(&PreconditionStatus::Exempt);
-        if any_exempt != (shape == LandingShape::Tombstone) {
+            .iter()
+            .filter(|p| **p == PreconditionStatus::Exempt)
+            .count();
+        let all_five_exempt = exempt_count == self.automerge.preconditions.len()
+            && !self.automerge.preconditions.is_empty();
+        let any_exempt = exempt_count > 0;
+        if any_exempt != (shape == LandingShape::Tombstone)
+            || (shape == LandingShape::Tombstone && !all_five_exempt)
+        {
             out.push(Invariant::ExemptOffTombstone);
+        }
+
+        // GR §5.6: `gates[]` "sorts by gate number ascending". Checked over the
+        // array as given, because the serializer sorts and the trailer does
+        // not — see `Invariant::GatesOutOfOrder`.
+        if self
+            .gates
+            .windows(2)
+            .any(|w| w[0].gate.number() >= w[1].gate.number())
+        {
+            out.push(Invariant::GatesOutOfOrder);
+        }
+
+        out.extend(self.validate_automerge(shape));
+        out.extend(self.validate_no_evidence_shape(shape));
+
+        // GR §5.3's parse, bound to the member it produces. The parse existed
+        // and nothing called it: "**The parse is normative, because a mis-parse
+        // forks both the digest and §3.3's `wrong-git` check.**"
+        if !git_version::is_major_minor(&self.git_version) {
+            out.push(Invariant::GitVersionNotMajorMinor);
+        }
+
+        // GR §5.5: "every reseal" is a signerless landing.
+        if shape == LandingShape::Reseal && self.authority.signoff.is_some() {
+            out.push(Invariant::SignoffOnAReseal);
         }
 
         out.extend(self.validate_floor());
@@ -293,6 +407,74 @@ impl Report {
             out.push(Invariant::FloorExtensionsMissingCA2Entry);
         }
 
+        out
+    }
+
+    /// GR §5.8's two preconditions whose truth is a member of this same
+    /// report, and which §5.8 marks **R** for exactly that reason.
+    ///
+    /// Precondition 3 needs no check: §5.8 makes it "structurally `"met"` in
+    /// v1: there is no deferred mode (PB §6.3 G10)", and a `met` that is
+    /// always `met` cannot disagree with anything. Preconditions 2 and 4 are
+    /// facts about the run that no other member records, so nothing here can
+    /// check them.
+    fn validate_automerge(&self, shape: LandingShape) -> Vec<Invariant> {
+        let mut out = Vec::new();
+        // A tombstone is exempt from the rule entirely, so none of its
+        // preconditions is a claim about anything.
+        if shape == LandingShape::Tombstone {
+            return out;
+        }
+
+        if let Some(zero) = self.automerge.preconditions.first() {
+            // "`C-A3: threat.candidate == \"trusted\"`" — and `threat` is
+            // derived from `c_a3`, so this compares the rule to itself through
+            // the member the report publishes.
+            let trusted = self.policy.rules.c_a3 == Threat::Trusted;
+            if (*zero == PreconditionStatus::Met) != trusted {
+                out.push(Invariant::PreconditionZeroDisagreesWithCA3);
+            }
+        }
+        if let Some(one) = self.automerge.preconditions.get(1) {
+            // "the ingested header's `profile=` equals it" — and the request is
+            // `container`, the one profile v1 can license.
+            let contained = self.profile == SealProfile::Container;
+            if (*one == PreconditionStatus::Met) != contained {
+                out.push(Invariant::PreconditionOneDisagreesWithProfile);
+            }
+        }
+        out
+    }
+
+    /// GR §5.9's fixed shape for a landing that ingested no result file.
+    ///
+    /// "That report's shape is fixed: `evidence` is **absent** … `profile` is
+    /// **`"none"`** … `automerge.preconditions[1].status` and `[2].status` are
+    /// **`"unmet"`**", quoting RF §8.4: "a seal must never claim a boundary no
+    /// header established."
+    ///
+    /// The converse — `evidence` present on a landing that runs no suite — is
+    /// checked above and is a different fault: this one is about a landing that
+    /// *could* have ingested a file and did not.
+    fn validate_no_evidence_shape(&self, shape: LandingShape) -> Vec<Invariant> {
+        let mut out = Vec::new();
+        // A tombstone runs no suite at all; its `profile` is `n/a` under a rule
+        // of its own, and §5.9 is about the landing that ran one and ingested
+        // nothing.
+        if !shape.runs_suite() || self.evidence.is_some() {
+            return out;
+        }
+        if self.profile != SealProfile::None {
+            out.push(Invariant::NoEvidenceShape { member: "profile" });
+        }
+        for (index, member) in [
+            (1, "automerge.preconditions[1]"),
+            (2, "automerge.preconditions[2]"),
+        ] {
+            if self.automerge.preconditions.get(index) != Some(&PreconditionStatus::Unmet) {
+                out.push(Invariant::NoEvidenceShape { member });
+            }
+        }
         out
     }
 
@@ -353,6 +535,13 @@ impl Report {
             {
                 out.push(Invariant::WireKindDisagreesWith61 { gate: w.gate });
             }
+            // GR §6.3's token-shape column. `TokenShape` was modeled and
+            // consulted by nothing, so a bare `G5`, a `G3:src/a.ts` and a
+            // `G13:NOT-AN-OID` all validated clean — and a review naming the
+            // conforming token does not contain any of them.
+            if !token_shape_holds(spec.token, w, self.object_format) {
+                out.push(Invariant::WireTokenShapeDisagreesWith63 { gate: w.gate });
+            }
         }
 
         // GR §5.8: the rule-5 wire is raised iff rule 5 applies to this landing
@@ -374,6 +563,33 @@ impl Report {
             out.push(Invariant::RuleFiveWirePresence { expected });
         }
         out
+    }
+}
+
+/// GR §6.3's token-shape column, per row.
+///
+/// `PathOrBare` admits both and is not a gap: GR §6.3 says so for each gate
+/// that carries it — G1's "five findings that name no path", G2's diff-size
+/// sub-check ("a repository-wide count that names no path"), G16's checks that
+/// implicate no path. Which of the two a given finding takes is the gate's own
+/// rule and is not a property of the report.
+///
+/// `NoToken` needs no case here: a wire from such a gate is already
+/// `WireFromAGateThatRaisesNone`, and the loop above `continue`s past it.
+fn token_shape_holds(shape: TokenShape, wire: &Wire, format: ObjectFormat) -> bool {
+    match shape {
+        TokenShape::NoToken | TokenShape::PathOrBare => true,
+        TokenShape::Bare => wire.path.is_none(),
+        TokenShape::Path => wire.path.is_some(),
+        // "`G13:` + the commit oid — lowercase hex at the length
+        // `object_format` implies, for which `esc` — and `tok` — is the
+        // identity". The width is the report's to know, which is why this
+        // takes the format and `Wire` does not.
+        TokenShape::CommitOid => wire.path.as_ref().is_some_and(|p| {
+            p.len() == format.hex_len()
+                && p.iter()
+                    .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(b))
+        }),
     }
 }
 

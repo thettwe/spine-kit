@@ -306,7 +306,23 @@ fn read_rules(v: &Value) -> Result<Rules, ReadError> {
     })
 }
 
-fn read_statement(v: &Value, at: &str) -> Result<(Statement, Option<bool>), ReadError> {
+/// One `authority` statement.
+///
+/// `carries_self_approved` is not a convenience: GR §5.5 puts `self_approved`
+/// on `reviews[]` and on nothing else, so on a `signoff`, an `approve`, a
+/// `withdraw` or a `reopen` it is an **unknown member**, and GR §3.2 makes that
+/// a refusal — "A reader that meets an unknown member name inside a version it
+/// does know refuses the same way. The schema is closed."
+///
+/// Read as optional everywhere, it was accepted and discarded, and this
+/// module's own header says what that costs: "A reader that skipped an unknown
+/// member would round-trip the report to different bytes, and `--verify` would
+/// then report `report-mismatch` against a sound landing."
+fn read_statement(
+    v: &Value,
+    at: &str,
+    carries_self_approved: bool,
+) -> Result<(Statement, Option<bool>), ReadError> {
     let mut o = Obj::new(at, v)?;
     let line = bytes(o.required("line")?, at)?;
     let fingerprint =
@@ -317,10 +333,14 @@ fn read_statement(v: &Value, at: &str) -> Result<(Statement, Option<bool>), Read
             }
         })?;
     let namespace = domain(Namespace::parse, o.required("namespace")?, at)?;
-    let self_approved = o
-        .optional("self_approved")
-        .map(|v| boolean(v, at))
-        .transpose()?;
+    let self_approved = if carries_self_approved {
+        o.optional("self_approved")
+            .map(|v| boolean(v, at))
+            .transpose()?
+    } else {
+        // Left unread, so `finish()` meets it as the unknown member it is.
+        None
+    };
     o.finish()?;
     Ok((
         Statement {
@@ -337,13 +357,15 @@ fn read_authority(v: &Value) -> Result<Authority, ReadError> {
     let opt = |o: &mut Obj<'_>, name: &'static str| -> Result<Option<Statement>, ReadError> {
         match o.optional(name) {
             None => Ok(None),
-            Some(v) => Ok(Some(read_statement(v, &format!("authority.{name}"))?.0)),
+            Some(v) => Ok(Some(
+                read_statement(v, &format!("authority.{name}"), false)?.0,
+            )),
         }
     };
     let approve = opt(&mut o, "approve")?;
     let reopens = array(o.required("reopens")?, "authority.reopens")?
         .iter()
-        .map(|s| read_statement(s, "authority.reopens[]").map(|(st, _)| st))
+        .map(|s| read_statement(s, "authority.reopens[]", false).map(|(st, _)| st))
         .collect::<Result<Vec<_>, _>>()?;
 
     // The per-review `self_approved` is *derived* (GR §5.5), so it is read only
@@ -351,7 +373,7 @@ fn read_authority(v: &Value) -> Result<Authority, ReadError> {
     let mut reviews = Vec::new();
     let mut stored_self_approved = Vec::new();
     for s in array(o.required("reviews")?, "authority.reviews")? {
-        let (st, sa) = read_statement(s, "authority.reviews[]")?;
+        let (st, sa) = read_statement(s, "authority.reviews[]", true)?;
         let sa = sa.ok_or(ReadError::Malformed {
             at: "authority.reviews[]".into(),
             why: "a review carries self_approved",
@@ -384,7 +406,7 @@ fn read_authority(v: &Value) -> Result<Authority, ReadError> {
 }
 
 fn read_gates(v: &Value) -> Result<Vec<GateResult>, ReadError> {
-    array(v, "gates")?
+    let gates: Vec<GateResult> = array(v, "gates")?
         .iter()
         .map(|e| {
             let mut o = Obj::new("gates[]", e)?;
@@ -393,7 +415,23 @@ fn read_gates(v: &Value) -> Result<Vec<GateResult>, ReadError> {
             o.finish()?;
             Ok(GateResult { gate, status })
         })
-        .collect()
+        .collect::<Result<_, ReadError>>()?;
+
+    // GR §5.6: "sorts by gate number ascending." The reader refuses rather
+    // than sorting, for the reason the module header gives: the serializer
+    // *would* sort, so a reader that accepted an unsorted array would round-
+    // trip to different bytes and `--verify` would report `report-mismatch`
+    // against the very document it was handed.
+    if gates
+        .windows(2)
+        .any(|w| w[0].gate.number() >= w[1].gate.number())
+    {
+        return Err(ReadError::Malformed {
+            at: "gates".into(),
+            why: "is not sorted ascending by gate number, or repeats a gate",
+        });
+    }
+    Ok(gates)
 }
 
 fn read_wires(v: &Value) -> Result<WireSet, ReadError> {

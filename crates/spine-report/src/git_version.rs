@@ -156,3 +156,53 @@ mod tests {
         );
     }
 }
+
+/// Whether a stored `git_version` member is in GR §5.3's form.
+///
+/// [`parse`] turns a `git --version` banner into this; this checks that a
+/// member already holding a value is one the parse could have produced.
+/// The two are separate because the report is assembled from a value, not from
+/// a banner, and nothing bound the member to the parse until now.
+pub fn is_major_minor(value: &str) -> bool {
+    let Some((major, minor)) = value.split_once('.') else {
+        return false;
+    };
+    let ok = |part: &str| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit());
+    ok(major) && ok(minor)
+}
+
+#[cfg(test)]
+mod member_tests {
+    use super::*;
+
+    /// GR §5.3: "Patch level, release-candidate suffixes and vendor suffixes
+    /// are discarded before recording" — so a member still carrying one was
+    /// never parsed.
+    #[test]
+    fn the_member_form_is_two_integers_and_nothing_else() {
+        assert!(is_major_minor("2.45"));
+        assert!(is_major_minor("2.0"));
+        assert!(is_major_minor("10.100"));
+
+        assert!(!is_major_minor("2.45.1"));
+        assert!(!is_major_minor("2.45.1 (Apple Git-154)"));
+        assert!(!is_major_minor("2"));
+        assert!(!is_major_minor(""));
+        assert!(!is_major_minor("2."));
+        assert!(!is_major_minor(".45"));
+        assert!(!is_major_minor("v2.45"));
+    }
+
+    /// And what `parse` produces always passes it.
+    #[test]
+    fn every_banner_the_parse_accepts_produces_a_conforming_member() {
+        for banner in [
+            "git version 2.45.1",
+            "git version 2.39.3 (Apple Git-146)",
+            "git version 2.45.0.windows.1",
+        ] {
+            let parsed = parse(banner).expect("a banner the parse accepts");
+            assert!(is_major_minor(&parsed), "{banner} produced {parsed:?}");
+        }
+    }
+}

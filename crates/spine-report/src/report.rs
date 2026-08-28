@@ -1,10 +1,11 @@
 //! The gate report: GR §5's schema as a typed value, and GR §2's canonical
 //! bytes as its only serialization.
 //!
-//! **What is stored and what is derived.** GR §5 lists nineteen top-level
-//! members; this type has fewer fields, because four of them are stated as
-//! functions of others and a field that can disagree with its own definition is
-//! a way to write a wrong value into a signed artifact:
+//! **What is stored and what is derived.** GR §5's table lists eighteen
+//! top-level members; this type has fewer fields, because six members — the
+//! two top-level ones below and four nested — are stated as functions of others,
+//! and a field that can disagree with its own definition is a way to write a
+//! wrong value into a signed artifact:
 //!
 //! | Member | Definition | Where it is computed |
 //! |---|---|---|

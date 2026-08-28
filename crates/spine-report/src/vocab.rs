@@ -219,12 +219,18 @@ impl GateStatus {
     /// the gate ([`crate::Gate::break_glass_bypassable`]) and a caller that
     /// forgot the filter would mark G14 `override` — the one thing PB §11 says
     /// break-glass may never do.
-    pub fn derive(
-        gate: crate::Gate,
-        all_findings_covered: bool,
-        had_finding: bool,
-        break_glass_named: bool,
-    ) -> Self {
+    /// **`findings` is a three-valued enum and not a boolean, deliberately.**
+    /// GR §5.6.1: "An outright finding is one that limb (a) never reaches: **no
+    /// review class admits it**, so the gate reads `fail` whatever any
+    /// `Spine-Review` names", and "**Outright is a coverage rule, never a
+    /// containment rule, and the two must not be conflated.**"
+    ///
+    /// A `bool` could not say which of the two a `false` meant, and the natural
+    /// way to compute one — "the review's `wires=` names the token" — is
+    /// exactly the conflation those two sentences record being closed in
+    /// v0.14. [`Findings::Outright`] is unreachable from that computation, so
+    /// a caller has to have decided.
+    pub fn derive(gate: crate::Gate, findings: Findings, break_glass_named: bool) -> Self {
         // "A break-glass bypass reads `=override` whether or not the gate
         // produced a finding" (GR §5.6.1, quoting PB §7.6 and PB §6's
         // transition row). Limb (b) is checked first because it does not ask
@@ -232,15 +238,39 @@ impl GateStatus {
         if break_glass_named && gate.break_glass_bypassable() {
             return GateStatus::Override;
         }
-        if !had_finding {
-            return GateStatus::Pass;
-        }
-        if all_findings_covered {
-            GateStatus::Override
-        } else {
-            GateStatus::Fail
+        match findings {
+            Findings::None => GateStatus::Pass,
+            // "every finding is covered by a signed review whose class admits
+            // that wire".
+            Findings::AllCovered => GateStatus::Override,
+            // "produced at least one finding, and at least one is uncovered",
+            // and the outright case, which limb (a) never reaches.
+            Findings::SomeUncovered | Findings::Outright => GateStatus::Fail,
         }
     }
+}
+
+/// What a gate's findings amount to, for GR §5.6.1's status rule.
+///
+/// Three of the four values are limb (a)'s; the fourth is the case limb (a)
+/// never reaches.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Findings {
+    /// "the gate ran and produced no *finding*". It may still have raised
+    /// wires — GR §5.6.1: "A gate may read `pass` while having raised wires."
+    None,
+    /// "every finding is covered by a signed review **whose class admits that
+    /// wire**" — both halves, the admission and the naming.
+    AllCovered,
+    /// At least one finding is admissible and not named.
+    SomeUncovered,
+    /// At least one finding is **outright**: "no review class admits it, so
+    /// the gate reads `fail` whatever any `Spine-Review` names."
+    ///
+    /// Distinct from [`Findings::SomeUncovered`] because the two are different
+    /// facts and only one of them a reviewer can act on. The status is the
+    /// same; the reason a human is given is not.
+    Outright,
 }
 
 closed_domain! {
@@ -481,7 +511,7 @@ mod tests {
     #[test]
     fn break_glass_marks_a_silent_gate_override() {
         assert_eq!(
-            GateStatus::derive(Gate::G3, true, false, true),
+            GateStatus::derive(Gate::G3, Findings::None, true),
             GateStatus::Override
         );
     }
@@ -492,11 +522,11 @@ mod tests {
     #[test]
     fn break_glass_cannot_override_an_authority_gate() {
         assert_eq!(
-            GateStatus::derive(Gate::G14, false, true, true),
+            GateStatus::derive(Gate::G14, Findings::SomeUncovered, true),
             GateStatus::Fail
         );
         assert_eq!(
-            GateStatus::derive(Gate::G14, true, false, true),
+            GateStatus::derive(Gate::G14, Findings::None, true),
             GateStatus::Pass
         );
     }
@@ -506,7 +536,7 @@ mod tests {
     #[test]
     fn a_gate_that_raised_only_an_advisory_reads_pass() {
         assert_eq!(
-            GateStatus::derive(Gate::G11, true, false, false),
+            GateStatus::derive(Gate::G11, Findings::None, false),
             GateStatus::Pass
         );
     }
@@ -574,6 +604,33 @@ mod tests {
         assert_eq!(
             LandingShape::of(Lane::Quick, Event::Land),
             LandingShape::QuickLand
+        );
+    }
+
+    /// GR §5.6.1: "An outright finding is one that limb (a) never reaches: no
+    /// review class admits it, so the gate reads `fail` whatever any
+    /// `Spine-Review` names."
+    ///
+    /// The boolean this replaced could not tell an outright finding from an
+    /// uncovered one, so a caller computing coverage as containment — the
+    /// conflation §5.6.1 and PB §12 record being closed in v0.14 — got
+    /// `override` for `paths-shrank`.
+    #[test]
+    fn an_outright_finding_fails_whatever_a_review_names() {
+        assert_eq!(
+            GateStatus::derive(Gate::G14, Findings::Outright, false),
+            GateStatus::Fail
+        );
+        // And break-glass does not rescue it either, G14 not being one of the
+        // eight PB §7.6 permits it to bypass.
+        assert_eq!(
+            GateStatus::derive(Gate::G14, Findings::Outright, true),
+            GateStatus::Fail
+        );
+        // The contrast: an admissible finding, named, is limb (a).
+        assert_eq!(
+            GateStatus::derive(Gate::G14, Findings::AllCovered, false),
+            GateStatus::Override
         );
     }
 

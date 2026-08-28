@@ -554,3 +554,164 @@ fn floor_extensions_restates_every_c_a2_entry() {
     r.policy.floor_extensions.push(b"db/migrations/".to_vec());
     assert_eq!(r.validate(), Vec::new());
 }
+
+// ---------------------------------------------------------------------------
+// The invariants the third-round verification found missing. Each of these
+// reports validated clean before it, and each carries a wrong value in a
+// digest-bearing member.
+// ---------------------------------------------------------------------------
+
+/// GR §5.8's precondition 0: "`C-A3: threat.candidate == \"trusted\"`", marked
+/// **R** — both sides are members of this report.
+///
+/// PB §11: it "fails on every run that tests anything, so the `G11`
+/// precondition wire is present in every such set, in every lane." A `met`
+/// beside `c_a3: hostile` asserts auto-merge available on a repository whose
+/// constitution says the candidate is hostile.
+#[test]
+fn precondition_zero_is_checked_against_c_a3() {
+    let mut r = reseal();
+    r.automerge.preconditions[0] = PreconditionStatus::Met;
+    // Now every precondition is met, so the rule-5 wire must go too — which is
+    // the shape that made the two errors cancel.
+    r.wires = WireSet::default();
+    let violations = r.validate();
+    assert!(
+        violations.contains(&Invariant::PreconditionZeroDisagreesWithCA3),
+        "{violations:?}"
+    );
+    // And with `c_a3: trusted`, `met` is right and the wire is correctly gone.
+    r.policy.rules.c_a3 = Threat::Trusted;
+    assert_eq!(r.validate(), []);
+}
+
+/// GR §5.8's precondition 1: the boundary, "the ingested header's `profile=`
+/// equals it". RF §8.4: "a seal must never claim a boundary no header
+/// established."
+#[test]
+fn precondition_one_is_checked_against_the_profile() {
+    let mut r = reseal();
+    r.profile = SealProfile::None;
+    // `evidence` stays, so this is a landing that *did* ingest a file and
+    // reported `none` — precondition 1 cannot be met.
+    let violations = r.validate();
+    assert!(
+        violations.contains(&Invariant::PreconditionOneDisagreesWithProfile),
+        "{violations:?}"
+    );
+}
+
+/// GR §5.9's fixed shape for a landing that ingested no result file:
+/// "`evidence` is **absent** … `profile` is **`\"none\"`** …
+/// `automerge.preconditions[1].status` and `[2].status` are **`\"unmet\"`**".
+#[test]
+fn a_landing_that_ingested_nothing_has_a_fixed_shape() {
+    let mut r = reseal();
+    r.evidence = None;
+    let violations = r.validate();
+    assert!(
+        violations.contains(&Invariant::NoEvidenceShape { member: "profile" }),
+        "{violations:?}"
+    );
+    assert!(violations.contains(&Invariant::NoEvidenceShape {
+        member: "automerge.preconditions[1]"
+    }));
+    assert!(violations.contains(&Invariant::NoEvidenceShape {
+        member: "automerge.preconditions[2]"
+    }));
+
+    // The conforming shape, which §5.9 fixes.
+    r.profile = SealProfile::None;
+    r.automerge.preconditions[1] = PreconditionStatus::Unmet;
+    r.automerge.preconditions[2] = PreconditionStatus::Unmet;
+    assert_eq!(r.validate(), []);
+}
+
+/// GR §5.8: "a **tombstone** is exempt from the rule entirely — **all five**
+/// `\"exempt\"`". The check was `contains(&Exempt)`, which is *any*.
+#[test]
+fn a_tombstone_is_exempt_in_all_five_or_in_none() {
+    let mut t = tombstone(AutoMerge::On);
+    t.automerge.preconditions[1] = PreconditionStatus::Unmet;
+    let violations = t.validate();
+    assert!(
+        violations.contains(&Invariant::ExemptOffTombstone),
+        "{violations:?}"
+    );
+}
+
+/// GR §5.6: `gates[]` "sorts by gate number ascending", and §5.6.1 makes
+/// `Spine-Gates` "a rendering of this array, **in the same order**". The
+/// serializer sorts; the renderer did not.
+#[test]
+fn an_unsorted_gates_array_is_refused_and_renders_sorted_anyway() {
+    let mut t = tombstone(AutoMerge::On);
+    let sorted_line = spine_gates_value(&t.gates);
+    let digest_before = t.digest();
+
+    t.gates.reverse();
+    let violations = t.validate();
+    assert!(
+        violations.contains(&Invariant::GatesOutOfOrder),
+        "{violations:?}"
+    );
+    // The digest never moved — the serializer sorts — and the rendering now
+    // agrees with it instead of following the caller's order.
+    assert_eq!(t.digest(), digest_before);
+    assert_eq!(spine_gates_value(&t.gates), sorted_line);
+}
+
+/// GR §6.3's token-shape column: G3 is "bare `G3` … there is nothing to put
+/// after the colon"; G13 is "`G13:` + the commit oid".
+#[test]
+fn a_wire_whose_token_is_the_wrong_shape_is_refused() {
+    let mut r = reseal();
+    let mut raised: Vec<Wire> = r.wires.as_slice().to_vec();
+    raised.push(Wire::at(
+        Gate::G13,
+        "NOT-AN-OID",
+        WireClass::Protected,
+        WireKind::Finding,
+    ));
+    r.wires = WireSet::from_raised(raised).unwrap();
+    let violations = r.validate();
+    assert!(
+        violations.contains(&Invariant::WireTokenShapeDisagreesWith63 { gate: Gate::G13 }),
+        "{violations:?}"
+    );
+}
+
+/// GR §5.3's parse, bound to the member it produces: "Patch level,
+/// release-candidate suffixes and vendor suffixes are discarded before
+/// recording."
+#[test]
+fn a_git_version_carrying_a_patch_level_is_refused() {
+    let mut r = reseal();
+    r.git_version = "2.45.1 (Apple Git-154)".to_owned();
+    assert!(
+        r.validate().contains(&Invariant::GitVersionNotMajorMinor),
+        "{:?}",
+        r.validate()
+    );
+    r.git_version = String::new();
+    assert!(r.validate().contains(&Invariant::GitVersionNotMajorMinor));
+}
+
+/// GR §5.5: "A landing with none is a **signerless** landing — every quick-lane
+/// landing that copies no `Spine-Upgrade`, **every reseal**, and an orphaned
+/// tombstone." A `signoff` on a reseal also flips `self_approved`, which is
+/// what PB §11's signerless overlay turns on.
+#[test]
+fn a_reseal_binds_no_sign_off() {
+    let mut r = reseal();
+    r.authority.signoff = Some(stmt(
+        "Spine-Signoff: INT-042 blob=dfb4079e22de55ec377468b9b697fdf86085ea37 \
+         template=intent@2 constitution=v3 reopens=0 signer=alice@example.com",
+        Namespace::Signoff,
+    ));
+    assert!(
+        r.validate().contains(&Invariant::SignoffOnAReseal),
+        "{:?}",
+        r.validate()
+    );
+}

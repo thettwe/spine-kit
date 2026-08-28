@@ -481,6 +481,56 @@ fn an_unknown_member_is_report_version_unknown() {
     assert_eq!(err.to_string(), "report-version-unknown");
 }
 
+/// The same rule one level down, where the reader was tolerant: GR §5.5 puts
+/// `self_approved` on `reviews[]` and on nothing else, so on a sign-off it is
+/// an unknown member.
+///
+/// Accepted and discarded, it round-tripped the report to different bytes —
+/// which is `--verify` reporting `report-mismatch` against a sound landing.
+#[test]
+fn self_approved_on_a_sign_off_is_an_unknown_member() {
+    use spine_canon::Value;
+    let mut value = evaluation_2().to_value();
+    let Value::Obj(members) = &mut value else {
+        unreachable!()
+    };
+    for (name, v) in members.iter_mut() {
+        if name == "authority"
+            && let Value::Obj(authority) = v
+        {
+            for (member, statement) in authority.iter_mut() {
+                if member == "signoff"
+                    && let Value::Obj(fields) = statement
+                {
+                    fields.push(("self_approved".to_owned(), Value::Bool(false)));
+                }
+            }
+        }
+    }
+    let err = Report::from_value(&value).unwrap_err();
+    assert_eq!(err.to_string(), "report-version-unknown");
+}
+
+/// GR §5.6: `gates[]` "sorts by gate number ascending". The reader refuses
+/// rather than sorting, because the serializer *would* sort: a tolerant read
+/// followed by a write is a different digest over the same document.
+#[test]
+fn an_unsorted_gates_array_does_not_parse() {
+    use spine_canon::Value;
+    let mut value = evaluation_2().to_value();
+    let Value::Obj(members) = &mut value else {
+        unreachable!()
+    };
+    for (name, v) in members.iter_mut() {
+        if name == "gates"
+            && let Value::Arr(gates) = v
+        {
+            gates.reverse();
+        }
+    }
+    assert!(Report::from_value(&value).is_err());
+}
+
 /// GR §3.2: "A reader that does not know a report's `report_version`
 /// **refuses**."
 #[test]

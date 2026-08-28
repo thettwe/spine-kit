@@ -85,7 +85,7 @@ pub use report::{
 pub use validate::{Invariant, rule_five_wire};
 pub use verify::{Outcome, Preconditions, VerifyStatus, verify};
 pub use vocab::{
-    AutoMerge, Event, GateStatus, LandingShape, Lane, Mode, Namespace, PreconditionStatus,
-    Reverify, RuleMode, SealProfile, Strategy, Threat, WireClass, WireKind,
+    AutoMerge, Event, Findings, GateStatus, LandingShape, Lane, Mode, Namespace,
+    PreconditionStatus, Reverify, RuleMode, SealProfile, Strategy, Threat, WireClass, WireKind,
 };
 pub use wire::{Wire, WireSet, WireSetError};

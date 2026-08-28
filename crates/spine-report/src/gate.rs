@@ -409,9 +409,20 @@ impl GateResult {
 /// The `Spine-Gates: ` field name is the envelope's, not this function's — this
 /// returns the value alone, which is what the trailer's writer places after the
 /// name and one space (PB §7.2).
+/// **Sorted, because the serializer sorts.** GR §5.6 fixes `gates[]` as
+/// "sorts by gate number ascending", so the array's canonical order is the
+/// ascending one and rendering "the same order" means rendering that.
+///
+/// Left as the caller's order, an unsorted array reached `report=` sorted (the
+/// serializer sorts) and the trailer rendered as handed — one value, two
+/// renderings, and the one that reaches `envelope=` is the wrong one. An
+/// unsorted array is also `Invariant::GatesOutOfOrder`; this makes the two
+/// spellings agree even when nothing consulted the invariant.
 pub fn spine_gates_value(gates: &[GateResult]) -> String {
+    let mut sorted: Vec<&GateResult> = gates.iter().collect();
+    sorted.sort_by_key(|g| g.gate.number());
     let mut out = String::new();
-    for (i, g) in gates.iter().enumerate() {
+    for (i, g) in sorted.iter().enumerate() {
         if i > 0 {
             out.push(' ');
         }
