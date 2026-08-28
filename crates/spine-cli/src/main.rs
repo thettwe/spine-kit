@@ -6,6 +6,7 @@
 //! a refusal leaves the repository exactly as it was.
 
 mod argv;
+mod check;
 mod init;
 
 use std::process::ExitCode;
@@ -54,9 +55,6 @@ fn main() -> ExitCode {
             eprintln!("spine index: not yet implemented");
             ExitCode::from(exit::ERROR)
         }
-        argv::Command::Check => {
-            eprintln!("spine check: not yet implemented");
-            ExitCode::from(exit::ERROR)
-        }
+        argv::Command::Check(options) => check::run(options.as_ref()),
     }
 }

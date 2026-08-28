@@ -15,6 +15,12 @@
 //!            [--trust-root <sha>] [--rotate-trust-root] [--dry-run] [--status]
 //!            [--merge] [--adopt <path|file#region>] [--force <path>] [--abort]
 //!            [--rollback [<sha>]] [--uninstall]
+//!
+//! spine check [--ci] [--collect] [--constitution] [--authority]
+//!             [--approve <id>] [--review [<id> | --quick <branch> | --reseal]]
+//!             [--land [<id> | --quick <branch> | --reseal] [--print] [--dry-run]]
+//!             [--report <path>] [--reconstruct] [--verify <sha>]
+//!             [--break-glass "<reason>"] [--pre-receive]
 //! ```
 
 use core::fmt;
@@ -29,7 +35,77 @@ pub enum Command {
     Init(Box<Init>),
     New,
     Index { fresh: bool, dump: bool },
-    Check,
+    Check(Box<Check>),
+}
+
+/// What `spine check` was asked to do.
+///
+/// **`--land`, `--review` and `--approve` take a *subject*, and the three
+/// spellings are not interchangeable.** PB §11: `--land [<id> | --quick
+/// <branch> | --reseal]`, with "`<id>` omitted for upgrade landings" — so a
+/// bare `--land` is a fourth, legal subject and not a missing argument.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Check {
+    /// "the untrusted job passes both, a solo developer passes `--collect`
+    /// alone … and nesting it inside `--ci` would leave the solo path with no
+    /// legal invocation."
+    pub ci: bool,
+    pub collect: bool,
+    pub constitution: bool,
+    pub authority: bool,
+    pub approve: Option<String>,
+    pub review: Option<Subject>,
+    pub land: Option<Subject>,
+    /// Only with `--land`. "`--print` emits a sealed envelope only for a run
+    /// that would have landed."
+    pub print: bool,
+    /// Only with `--land`. "`--dry-run` never signs."
+    pub dry_run: bool,
+    /// "`--land --ci` **always** writes the canonical gate report to
+    /// `.spine/cache/report.json`; `--report <path>` overrides the
+    /// destination."
+    pub report: Option<String>,
+    pub reconstruct: bool,
+    pub verify: Option<String>,
+    pub break_glass: Option<String>,
+    pub pre_receive: bool,
+}
+
+/// The subject of a `--land` or `--review`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Subject {
+    /// A gated landing or review: `--land INT-042`.
+    Intent(String),
+    /// `--land --quick <branch>` (PB §5.2).
+    Quick(String),
+    /// `--land --reseal` (PB §5.5).
+    Reseal,
+    /// "`<id>` omitted for upgrade landings" — the toolkit lifecycle landings
+    /// of PB §6.7, which ride the quick lane with no intent id.
+    Upgrade,
+}
+
+impl Check {
+    /// PB §7.1: "any invocation that produces a `-Sig` line with a key that is
+    /// not the `--ci` pipeline secret — `--sign`, `--reopen`, `--withdraw`,
+    /// `--approve`, `--review`, `--break-glass`, and `--land` outside `--ci` —
+    /// is TTY-only and refuses under `SPINE_AGENT=1`."
+    ///
+    /// The three that belong to `spine new` are that command's to enforce.
+    /// `--dry-run` is excluded because it "never signs", and a dry run under
+    /// an agent produces no `-Sig` line to refuse.
+    pub fn signs_with_a_human_key(&self) -> bool {
+        self.approve.is_some()
+            || self.review.is_some()
+            || self.break_glass.is_some()
+            || (self.land.is_some() && !self.ci && !self.dry_run)
+    }
+
+    /// PB §11: "`--collect`, `--approve` … and `--constitution` … are the flags
+    /// that execute repository code; none of them runs in the trusted stage."
+    pub fn executes_repository_code(&self) -> bool {
+        self.collect || self.approve.is_some() || self.constitution
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -132,7 +208,7 @@ pub fn parse(args: &[String]) -> Result<Command, ArgError> {
             }
             Ok(Command::Index { fresh, dump })
         }
-        "check" => Ok(Command::Check),
+        "check" => parse_check(&rest).map(|check| Command::Check(Box::new(check))),
         other => Err(ArgError::UnknownCommand(other.to_string())),
     }
 }
@@ -232,6 +308,161 @@ fn parse_init(args: &[&String]) -> Result<Init, ArgError> {
     Ok(init)
 }
 
+/// PB §11's `spine check`.
+///
+/// **The subject of `--land` and `--review` is parsed positionally and the
+/// three spellings are mutually exclusive.** `--land INT-042 --quick b` is not
+/// a landing of two things; it is a mistake, and a landing is the wrong place
+/// to guess which half was meant.
+fn parse_check(args: &[&String]) -> Result<Check, ArgError> {
+    let mut check = Check::default();
+    let mut index = 0;
+
+    // Which flag is currently collecting a subject: `--land` and `--review`
+    // take theirs from the arguments that follow, and `--quick`/`--reseal`
+    // belong to whichever of the two opened.
+    #[derive(PartialEq)]
+    enum Open {
+        None,
+        Land,
+        Review,
+    }
+    let mut open = Open::None;
+
+    while index < args.len() {
+        let arg = args[index].as_str();
+        let mut next = |flag: &str| -> Result<String, ArgError> {
+            index += 1;
+            args.get(index)
+                .map(|v| v.to_string())
+                .ok_or_else(|| ArgError::MissingValue(flag.to_string()))
+        };
+
+        match arg {
+            "--ci" => check.ci = true,
+            "--collect" => check.collect = true,
+            "--constitution" => check.constitution = true,
+            "--authority" => check.authority = true,
+            "--reconstruct" => check.reconstruct = true,
+            "--pre-receive" => check.pre_receive = true,
+            "--print" => check.print = true,
+            "--dry-run" => check.dry_run = true,
+            "--approve" => check.approve = Some(next("--approve")?),
+            "--report" => check.report = Some(next("--report")?),
+            "--verify" => check.verify = Some(next("--verify")?),
+            "--break-glass" => check.break_glass = Some(next("--break-glass")?),
+            "--land" => {
+                // "`<id>` omitted for upgrade landings" — so a bare `--land`
+                // is a subject and not an omission. The id, if there is one,
+                // arrives as the next argument and is claimed below.
+                check.land = Some(Subject::Upgrade);
+                open = Open::Land;
+            }
+            "--review" => {
+                check.review = Some(Subject::Upgrade);
+                open = Open::Review;
+            }
+            "--quick" => {
+                let branch = next("--quick")?;
+                match open {
+                    Open::Land => check.land = Some(Subject::Quick(branch)),
+                    Open::Review => check.review = Some(Subject::Quick(branch)),
+                    // PB §5.2 spells the quick-lane landing
+                    // `spine check --land --quick <branch>`; `--quick` alone
+                    // names no operation.
+                    Open::None => {
+                        return Err(ArgError::UnknownFlag {
+                            command: "check",
+                            flag: "--quick without --land or --review".into(),
+                        });
+                    }
+                }
+                open = Open::None;
+            }
+            "--reseal" => {
+                match open {
+                    Open::Land => check.land = Some(Subject::Reseal),
+                    Open::Review => check.review = Some(Subject::Reseal),
+                    Open::None => {
+                        return Err(ArgError::UnknownFlag {
+                            command: "check",
+                            flag: "--reseal without --land or --review".into(),
+                        });
+                    }
+                }
+                open = Open::None;
+            }
+            other if other.starts_with('-') => {
+                return Err(ArgError::UnknownFlag {
+                    command: "check",
+                    flag: other.to_string(),
+                });
+            }
+            // A bare word: the id of whichever of `--land`/`--review` is open.
+            // Anywhere else it is a word `spine check` has no use for, and
+            // swallowing it would let `spine check INT-042` run every gate on
+            // the wrong subject in silence.
+            id => match open {
+                Open::Land => {
+                    check.land = Some(Subject::Intent(id.to_string()));
+                    open = Open::None;
+                }
+                Open::Review => {
+                    check.review = Some(Subject::Intent(id.to_string()));
+                    open = Open::None;
+                }
+                Open::None => {
+                    return Err(ArgError::UnknownFlag {
+                        command: "check",
+                        flag: id.to_string(),
+                    });
+                }
+            },
+        }
+        index += 1;
+    }
+
+    check_combination(&check)?;
+    Ok(check)
+}
+
+/// The combinations PB §11 forbids, refused here rather than acted on.
+fn check_combination(check: &Check) -> Result<(), ArgError> {
+    // "`--print` emits a sealed envelope only for a run that would have
+    // landed" — there is no run that would have landed without `--land`.
+    if check.print && check.land.is_none() {
+        return Err(ArgError::UnknownFlag {
+            command: "check",
+            flag: "--print without --land".into(),
+        });
+    }
+    if check.dry_run && check.land.is_none() {
+        return Err(ArgError::UnknownFlag {
+            command: "check",
+            flag: "--dry-run without --land".into(),
+        });
+    }
+    // A dry run "never signs" and `--print` "emits a sealed envelope": asking
+    // for both asks for an envelope nothing signed. Refusing beats printing an
+    // unsigned one that looks like the real thing.
+    if check.print && check.dry_run {
+        return Err(ArgError::UnknownFlag {
+            command: "check",
+            flag: "--print with --dry-run".into(),
+        });
+    }
+    // PB §11: `--collect`, `--approve` and `--constitution` "execute
+    // repository code; none of them runs in the trusted stage." `--land` is
+    // the trusted stage.
+    if check.land.is_some() && check.executes_repository_code() {
+        return Err(ArgError::UnknownFlag {
+            command: "check",
+            flag: "--land with a flag that executes repository code".into(),
+        });
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,7 +479,7 @@ mod tests {
             parse(&argv(&["index"])),
             Ok(Command::Index { .. })
         ));
-        assert!(matches!(parse(&argv(&["check"])), Ok(Command::Check)));
+        assert!(matches!(parse(&argv(&["check"])), Ok(Command::Check(_))));
 
         // PB §11 lists `spine context`, `spine stats`, `spine review` and
         // `spine eval` as roadmap 3+, "not v1" — so they are unknown, not
@@ -260,6 +491,172 @@ mod tests {
             ));
         }
         assert_eq!(parse(&[]), Err(ArgError::NoCommand));
+    }
+
+    fn check(words: &[&str]) -> Result<Check, ArgError> {
+        let mut all = vec!["check"];
+        all.extend_from_slice(words);
+        match parse(&argv(&all)) {
+            Ok(Command::Check(c)) => Ok(*c),
+            Ok(other) => panic!("parsed as {other:?}"),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// PB §11's three spellings of a subject, plus the fourth the prose adds:
+    /// "`<id>` omitted for upgrade landings".
+    #[test]
+    fn land_takes_one_of_four_subjects() {
+        assert_eq!(
+            check(&["--land", "INT-042"]).unwrap().land,
+            Some(Subject::Intent("INT-042".into()))
+        );
+        assert_eq!(
+            check(&["--land", "--quick", "quick/typo"]).unwrap().land,
+            Some(Subject::Quick("quick/typo".into()))
+        );
+        assert_eq!(
+            check(&["--land", "--reseal"]).unwrap().land,
+            Some(Subject::Reseal)
+        );
+        assert_eq!(check(&["--land"]).unwrap().land, Some(Subject::Upgrade));
+    }
+
+    /// `--quick` and `--reseal` belong to whichever of `--land`/`--review`
+    /// opened; alone they name no operation.
+    #[test]
+    fn quick_and_reseal_are_not_operations_of_their_own() {
+        assert!(matches!(
+            check(&["--quick", "quick/typo"]),
+            Err(ArgError::UnknownFlag { .. })
+        ));
+        assert!(matches!(
+            check(&["--reseal"]),
+            Err(ArgError::UnknownFlag { .. })
+        ));
+        assert_eq!(
+            check(&["--review", "--quick", "quick/typo"])
+                .unwrap()
+                .review,
+            Some(Subject::Quick("quick/typo".into()))
+        );
+    }
+
+    /// A bare word with nothing open is a word `spine check` has no use for.
+    /// Swallowing it would run every gate on the wrong subject in silence.
+    #[test]
+    fn a_stray_word_is_refused_rather_than_ignored() {
+        assert!(matches!(
+            check(&["INT-042"]),
+            Err(ArgError::UnknownFlag { .. })
+        ));
+        assert!(matches!(
+            check(&["--collect", "INT-042"]),
+            Err(ArgError::UnknownFlag { .. })
+        ));
+    }
+
+    /// PB §11: "`--collect` … is **independent of `--ci`** — the untrusted job
+    /// passes both, a solo developer passes `--collect` alone."
+    #[test]
+    fn collect_stands_alone_and_stands_with_ci() {
+        assert!(check(&["--collect"]).unwrap().collect);
+        let both = check(&["--ci", "--collect"]).unwrap();
+        assert!(both.ci && both.collect);
+    }
+
+    /// "`--print` emits a sealed envelope only for a run that would have
+    /// landed"; "`--dry-run` never signs". Neither has a meaning without
+    /// `--land`, and together they ask for an envelope nothing signed.
+    #[test]
+    fn print_and_dry_run_belong_to_land_and_not_to_each_other() {
+        assert!(matches!(
+            check(&["--print"]),
+            Err(ArgError::UnknownFlag { .. })
+        ));
+        assert!(matches!(
+            check(&["--dry-run"]),
+            Err(ArgError::UnknownFlag { .. })
+        ));
+        assert!(matches!(
+            check(&["--land", "INT-042", "--print", "--dry-run"]),
+            Err(ArgError::UnknownFlag { .. })
+        ));
+        assert!(check(&["--land", "INT-042", "--print"]).unwrap().print);
+    }
+
+    /// PB §11: `--collect`, `--approve` and `--constitution` "execute
+    /// repository code; none of them runs in the trusted stage" — and
+    /// `--land` is the trusted stage.
+    #[test]
+    fn land_refuses_the_flags_that_execute_repository_code() {
+        for flag in ["--collect", "--constitution"] {
+            assert!(
+                matches!(
+                    check(&["--land", "INT-042", flag]),
+                    Err(ArgError::UnknownFlag { .. })
+                ),
+                "{flag} was accepted beside --land"
+            );
+        }
+        assert!(matches!(
+            check(&["--land", "--approve", "INT-042"]),
+            Err(ArgError::UnknownFlag { .. })
+        ));
+    }
+
+    /// PB §7.1's TTY rule, as a property of the invocation.
+    #[test]
+    fn the_invocations_that_sign_under_a_human_key_are_the_ones_pb_7_1_names() {
+        assert!(
+            check(&["--approve", "INT-042"])
+                .unwrap()
+                .signs_with_a_human_key()
+        );
+        assert!(
+            check(&["--review", "INT-042"])
+                .unwrap()
+                .signs_with_a_human_key()
+        );
+        assert!(
+            check(&["--break-glass", "why"])
+                .unwrap()
+                .signs_with_a_human_key()
+        );
+        assert!(
+            check(&["--land", "INT-042"])
+                .unwrap()
+                .signs_with_a_human_key()
+        );
+
+        // "`--land` outside `--ci`" — inside it, the pipeline secret signs.
+        assert!(
+            !check(&["--ci", "--land", "INT-042"])
+                .unwrap()
+                .signs_with_a_human_key()
+        );
+        // "`--dry-run` never signs", so there is no `-Sig` line to refuse.
+        assert!(
+            !check(&["--land", "INT-042", "--dry-run"])
+                .unwrap()
+                .signs_with_a_human_key()
+        );
+        assert!(!check(&["--collect"]).unwrap().signs_with_a_human_key());
+    }
+
+    /// A value flag with nothing after it is a refusal, never an empty string.
+    #[test]
+    fn a_check_value_flag_needs_its_value() {
+        for flag in ["--approve", "--report", "--verify", "--break-glass"] {
+            assert!(
+                matches!(check(&[flag]), Err(ArgError::MissingValue(_))),
+                "{flag} accepted no value"
+            );
+        }
+        assert!(matches!(
+            check(&["--land", "--quick"]),
+            Err(ArgError::MissingValue(_))
+        ));
     }
 
     #[test]
