@@ -122,9 +122,18 @@ mod tests {
     #[test]
     fn id_9_1s_three_ac_lines_parse_to_their_numbers() {
         for (line, n) in [
-            ("AC-1: Given an invoice with taxable lines, when it is rendered, then the total", 1u8),
-            ("AC-2: Given an invoice whose lines are all zero-rated, when it is rendered, then", 2),
-            ("AC-3: Given an invoice issued before this ships, when it is re-rendered, then its", 3),
+            (
+                "AC-1: Given an invoice with taxable lines, when it is rendered, then the total",
+                1u8,
+            ),
+            (
+                "AC-2: Given an invoice whose lines are all zero-rated, when it is rendered, then",
+                2,
+            ),
+            (
+                "AC-3: Given an invoice issued before this ships, when it is re-rendered, then its",
+                3,
+            ),
         ] {
             assert_eq!(parse_ac_line(line, 1).unwrap().number, n);
         }
@@ -147,7 +156,11 @@ mod tests {
         }
         for digits in ["0", "7", "01", "10", "", "+1", "1x"] {
             let line = format!("AC-{digits}: x");
-            assert_eq!(parse_ac_line(&line, 1), Err(Status::MalformedAc), "{digits}");
+            assert_eq!(
+                parse_ac_line(&line, 1),
+                Err(Status::MalformedAc),
+                "{digits}"
+            );
         }
     }
 

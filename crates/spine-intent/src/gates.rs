@@ -85,9 +85,9 @@ pub fn g2(parsed: &Parsed, delta: &[&[u8]], exempt: &[&[u8]]) -> G2 {
 /// and applying glob semantics to it would silently widen a freeze into a
 /// subtree."
 pub fn g7_hard(delta: &[&[u8]], j_forbidden: &[Pattern], j_frozen: &[&[u8]]) -> bool {
-    delta.iter().any(|p| {
-        j_forbidden.iter().any(|f| f.matches(p)) || j_frozen.contains(p)
-    })
+    delta
+        .iter()
+        .any(|p| j_forbidden.iter().any(|f| f.matches(p)) || j_frozen.contains(p))
 }
 
 /// ID §7.3's `litprefix`.
@@ -173,15 +173,69 @@ mod tests {
             overlaps: bool,
         }
         for row in [
-            Row { p: "src/billing/", q: "src/billing/tax.ts", lp: "src/billing/", lq: "src/billing/tax.ts", overlaps: true },
-            Row { p: "src/bill", q: "src/billing/", lp: "src/bill", lq: "src/billing/", overlaps: false },
-            Row { p: "src/a/", q: "src/b/", lp: "src/a/", lq: "src/b/", overlaps: false },
-            Row { p: "docs/", q: "src/", lp: "docs/", lq: "src/", overlaps: false },
-            Row { p: "api/invoices.ts", q: "api/invoices.ts", lp: "api/invoices.ts", lq: "api/invoices.ts", overlaps: true },
-            Row { p: "src/*/a.ts", q: "src/*/b.ts", lp: "src/", lq: "src/", overlaps: true },
-            Row { p: "a*/x", q: "ab/x", lp: "", lq: "ab/x", overlaps: true },
-            Row { p: "a*/x", q: "cd/x", lp: "", lq: "cd/x", overlaps: true },
-            Row { p: "**/util.ts", q: "src/", lp: "", lq: "src/", overlaps: true },
+            Row {
+                p: "src/billing/",
+                q: "src/billing/tax.ts",
+                lp: "src/billing/",
+                lq: "src/billing/tax.ts",
+                overlaps: true,
+            },
+            Row {
+                p: "src/bill",
+                q: "src/billing/",
+                lp: "src/bill",
+                lq: "src/billing/",
+                overlaps: false,
+            },
+            Row {
+                p: "src/a/",
+                q: "src/b/",
+                lp: "src/a/",
+                lq: "src/b/",
+                overlaps: false,
+            },
+            Row {
+                p: "docs/",
+                q: "src/",
+                lp: "docs/",
+                lq: "src/",
+                overlaps: false,
+            },
+            Row {
+                p: "api/invoices.ts",
+                q: "api/invoices.ts",
+                lp: "api/invoices.ts",
+                lq: "api/invoices.ts",
+                overlaps: true,
+            },
+            Row {
+                p: "src/*/a.ts",
+                q: "src/*/b.ts",
+                lp: "src/",
+                lq: "src/",
+                overlaps: true,
+            },
+            Row {
+                p: "a*/x",
+                q: "ab/x",
+                lp: "",
+                lq: "ab/x",
+                overlaps: true,
+            },
+            Row {
+                p: "a*/x",
+                q: "cd/x",
+                lp: "",
+                lq: "cd/x",
+                overlaps: true,
+            },
+            Row {
+                p: "**/util.ts",
+                q: "src/",
+                lp: "",
+                lq: "src/",
+                overlaps: true,
+            },
         ] {
             assert_eq!(litprefix(row.p), row.lp, "litprefix({})", row.p);
             assert_eq!(litprefix(row.q), row.lq, "litprefix({})", row.q);
@@ -286,7 +340,11 @@ mod tests {
     #[test]
     fn forbidden_is_evaluated_first_and_a_path_in_both_is_reported_once() {
         let p = doc_with("src/", "src/auth/");
-        let delta: Vec<&[u8]> = vec![b"src/auth/login.ts", b"src/billing/tax.ts", b"docs/readme.md"];
+        let delta: Vec<&[u8]> = vec![
+            b"src/auth/login.ts",
+            b"src/billing/tax.ts",
+            b"docs/readme.md",
+        ];
         let v = g2(&p, &delta, &[]);
         assert_eq!(v.forbidden_hits, vec![b"src/auth/login.ts".to_vec()]);
         assert_eq!(v.outside, vec![b"docs/readme.md".to_vec()]);
@@ -310,7 +368,10 @@ mod tests {
     fn src_bill_does_not_license_src_billing() {
         let p = doc_with("src/bill", "");
         let delta: Vec<&[u8]> = vec![b"src/billing/x.ts"];
-        assert_eq!(g2(&p, &delta, &[]).outside, vec![b"src/billing/x.ts".to_vec()]);
+        assert_eq!(
+            g2(&p, &delta, &[]).outside,
+            vec![b"src/billing/x.ts".to_vec()]
+        );
     }
 
     /// R2: the wire token is `tok`, not `esc`. They differ on exactly the bytes
@@ -327,7 +388,13 @@ mod tests {
     /// pattern's own bytes are already its wire token.
     #[test]
     fn tok_is_the_identity_on_every_legal_pattern() {
-        for source in ["src/billing/", "api/invoices.ts", "**", "src/[!abc]*.ts", "a*b*c"] {
+        for source in [
+            "src/billing/",
+            "api/invoices.ts",
+            "**",
+            "src/[!abc]*.ts",
+            "a*b*c",
+        ] {
             let p = Pattern::parse(source).unwrap();
             assert_eq!(tok(p.as_str().as_bytes()), source);
             assert_eq!(spine_canon::esc(p.as_str().as_bytes()), source);

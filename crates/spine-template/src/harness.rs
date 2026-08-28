@@ -61,7 +61,12 @@ fn test_support(lang: &str) -> &'static [&'static str] {
             "jest.config.*",
             "jest.setup.*",
         ],
-        "dart" => &["test/support/**", "pubspec.yaml", "dart_test.yaml", "build.yaml"],
+        "dart" => &[
+            "test/support/**",
+            "pubspec.yaml",
+            "dart_test.yaml",
+            "build.yaml",
+        ],
         "swift" => &["Tests/Support/**", "Package.swift", "Package.resolved"],
         _ => &[],
     }

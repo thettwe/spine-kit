@@ -54,9 +54,9 @@ pub mod yaml;
 
 pub use glob::{Pattern, PatternError};
 pub use ids::IdError;
+pub use lang::lang as lang_of;
 pub use lang::{FileNotUtf8, Lang, LangUnclassifiable, Unresolvable, lang};
 pub use lex::{Token, TokenKind, lex};
-pub use lang::lang as lang_of;
 pub use pragma::{AcNumber, IntentId, Occurrence};
 pub use runner::{Runner, TestKey};
 pub use site::{Disposition, ImportSite};

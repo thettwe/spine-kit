@@ -216,11 +216,7 @@ mod tests {
             let name = case.variant.name();
             assert_eq!(rendered.len(), case.bytes, "{name} byte length");
             assert_eq!(rendered.chars().count(), case.chars, "{name} characters");
-            assert_eq!(
-                rendered.matches('\n').count(),
-                case.lines,
-                "{name} lines"
-            );
+            assert_eq!(rendered.matches('\n').count(), case.lines, "{name} lines");
             assert_eq!(
                 spine_canon::git_blob_id(rendered.as_bytes(), ObjectFormat::Sha1),
                 case.sha1,
@@ -296,9 +292,11 @@ mod tests {
             assert!(rendered.contains("Expected to change:\nMust NOT change:\n"));
             // TM §6.2, quoting ID §5.5: "A scaffold that seeds a prose line
             // here makes every freshly created intent unsignable."
-            assert!(rendered.ends_with(
-                "## Open questions (optional — must be empty before implementation)\n"
-            ));
+            assert!(
+                rendered.ends_with(
+                    "## Open questions (optional — must be empty before implementation)\n"
+                )
+            );
         }
     }
 

@@ -448,7 +448,8 @@ mod tests {
         // ordering the reader-independent failure first means "a
         // `variant-prefix-mismatch` … is never masked by a version one of them
         // happens not to hold".
-        let d = "# INT-042: t\nOwner: @a \u{00B7} Template: intent-bug@9 \u{00B7} Constitution: v1\n";
+        let d =
+            "# INT-042: t\nOwner: @a \u{00B7} Template: intent-bug@9 \u{00B7} Constitution: v1\n";
         assert_eq!(refuse(d), Status::VariantPrefixMismatch);
         // step 6 (stray preamble) before step 7 (missing section).
         let d = "# INT-042: t\nOwner: @a \u{00B7} Template: intent@2 \u{00B7} Constitution: v1\nstray\n";
@@ -457,7 +458,9 @@ mod tests {
         let d = doc("## Goal\n\n## Nope\n");
         assert_eq!(refuse(&d), Status::UnknownSection);
         // step 8 (empty section) before step 9 (non-goals too few).
-        let d = doc("## Goal\n\n## Non-goals\n- a\n\n## Acceptance criteria\nAC-1: x\n\n## Touchpoints\nExpected to change: src/\nMust NOT change:\n");
+        let d = doc(
+            "## Goal\n\n## Non-goals\n- a\n\n## Acceptance criteria\nAC-1: x\n\n## Touchpoints\nExpected to change: src/\nMust NOT change:\n",
+        );
         assert_eq!(refuse(&d), Status::EmptySection);
     }
 
@@ -613,29 +616,39 @@ mod tests {
     #[test]
     fn the_shape_bounds_fire_in_section_ordinal_order() {
         // Non-goals (ordinal 2) before acceptance criteria (ordinal 3).
-        let d = doc("## Goal\ng\n\n## Non-goals\n- a\n\n## Acceptance criteria\nAC-1: x\nAC-1: y\n\n## Touchpoints\nExpected to change: src/\nMust NOT change:\n");
+        let d = doc(
+            "## Goal\ng\n\n## Non-goals\n- a\n\n## Acceptance criteria\nAC-1: x\nAC-1: y\n\n## Touchpoints\nExpected to change: src/\nMust NOT change:\n",
+        );
         assert_eq!(refuse(&d), Status::NonGoalsTooFew);
     }
 
     #[test]
     fn an_empty_expected_list_is_no_expected_touchpoint() {
-        let d = doc("## Goal\ng\n\n## Non-goals\n- a\n- b\n\n## Acceptance criteria\nAC-1: x\n\n## Touchpoints\nExpected to change:\nMust NOT change:\n");
+        let d = doc(
+            "## Goal\ng\n\n## Non-goals\n- a\n- b\n\n## Acceptance criteria\nAC-1: x\n\n## Touchpoints\nExpected to change:\nMust NOT change:\n",
+        );
         assert_eq!(refuse(&d), Status::NoExpectedTouchpoint);
     }
 
     /// ID §5.4, and the case ID §11.8 says is "legal, meaningful and common".
     #[test]
     fn only_a_byte_identical_pattern_in_both_polarities_is_a_conflict() {
-        let d = doc("## Goal\ng\n\n## Non-goals\n- a\n- b\n\n## Acceptance criteria\nAC-1: x\n\n## Touchpoints\nExpected to change: src/\nMust NOT change: src/\n");
+        let d = doc(
+            "## Goal\ng\n\n## Non-goals\n- a\n- b\n\n## Acceptance criteria\nAC-1: x\n\n## Touchpoints\nExpected to change: src/\nMust NOT change: src/\n",
+        );
         assert_eq!(refuse(&d), Status::PolarityConflict);
 
-        let d = doc("## Goal\ng\n\n## Non-goals\n- a\n- b\n\n## Acceptance criteria\nAC-1: x\n\n## Touchpoints\nExpected to change: src/\nMust NOT change: src/auth/\n");
+        let d = doc(
+            "## Goal\ng\n\n## Non-goals\n- a\n- b\n\n## Acceptance criteria\nAC-1: x\n\n## Touchpoints\nExpected to change: src/\nMust NOT change: src/auth/\n",
+        );
         assert!(parse(d.as_bytes(), &id("INT-042")).is_ok());
     }
 
     #[test]
     fn a_pattern_repeated_within_one_polarity_is_deduplicated_not_refused() {
-        let d = doc("## Goal\ng\n\n## Non-goals\n- a\n- b\n\n## Acceptance criteria\nAC-1: x\n\n## Touchpoints\nExpected to change: src/, src/\nMust NOT change:\n");
+        let d = doc(
+            "## Goal\ng\n\n## Non-goals\n- a\n- b\n\n## Acceptance criteria\nAC-1: x\n\n## Touchpoints\nExpected to change: src/, src/\nMust NOT change:\n",
+        );
         let p = parse(d.as_bytes(), &id("INT-042")).unwrap();
         assert_eq!(p.expected.len(), 1);
     }
@@ -644,7 +657,9 @@ mod tests {
     /// unbounded `forbidden` set stays legal".
     #[test]
     fn an_unbounded_forbidden_set_parses() {
-        let d = doc("## Goal\ng\n\n## Non-goals\n- a\n- b\n\n## Acceptance criteria\nAC-1: x\n\n## Touchpoints\nExpected to change: src/\nMust NOT change: **\n");
+        let d = doc(
+            "## Goal\ng\n\n## Non-goals\n- a\n- b\n\n## Acceptance criteria\nAC-1: x\n\n## Touchpoints\nExpected to change: src/\nMust NOT change: **\n",
+        );
         let p = parse(d.as_bytes(), &id("INT-042")).unwrap();
         assert_eq!(p.forbidden[0].as_str(), "**");
     }
@@ -653,7 +668,9 @@ mod tests {
 
     #[test]
     fn open_questions_is_a_stage_condition_not_a_parse_condition() {
-        let d = doc(&format!("{SECTIONS}\n## Open questions\nWhat about refunds?\n"));
+        let d = doc(&format!(
+            "{SECTIONS}\n## Open questions\nWhat about refunds?\n"
+        ));
         let p = parse(d.as_bytes(), &id("INT-042")).unwrap();
         assert!(!p.open_questions_empty);
 
@@ -683,14 +700,20 @@ mod tests {
             worktree_clean: false,
             resign_floor: 3,
         };
-        assert_eq!(check_signoff(&p, &all_bad).unwrap_err().status, Status::WrongBranch);
+        assert_eq!(
+            check_signoff(&p, &all_bad).unwrap_err().status,
+            Status::WrongBranch
+        );
 
         let dirty = SignoffFacts {
             worktree_clean: false,
             resign_floor: 3,
             ..good
         };
-        assert_eq!(check_signoff(&p, &dirty).unwrap_err().status, Status::WorktreeDirty);
+        assert_eq!(
+            check_signoff(&p, &dirty).unwrap_err().status,
+            Status::WorktreeDirty
+        );
 
         let below = SignoffFacts {
             resign_floor: 3,
@@ -726,17 +749,35 @@ mod tests {
 
     #[test]
     fn the_bullet_and_touchpoint_maxima_are_256() {
-        let two_fifty_six = (0..256).map(|i| format!("- n{i}")).collect::<Vec<_>>().join("\n");
-        let two_fifty_seven = (0..257).map(|i| format!("- n{i}")).collect::<Vec<_>>().join("\n");
+        let two_fifty_six = (0..256)
+            .map(|i| format!("- n{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let two_fifty_seven = (0..257)
+            .map(|i| format!("- n{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         let build = |bullets: &str| {
-            format!("## Goal\ng\n\n## Non-goals\n{bullets}\n\n## Acceptance criteria\nAC-1: x\n\n## Touchpoints\nExpected to change: src/\nMust NOT change:\n")
+            format!(
+                "## Goal\ng\n\n## Non-goals\n{bullets}\n\n## Acceptance criteria\nAC-1: x\n\n## Touchpoints\nExpected to change: src/\nMust NOT change:\n"
+            )
         };
         assert!(parse(doc(&build(&two_fifty_six)).as_bytes(), &id("INT-042")).is_ok());
-        assert_eq!(with_sections(&build(&two_fifty_seven)), Status::TooManyNonGoals);
+        assert_eq!(
+            with_sections(&build(&two_fifty_seven)),
+            Status::TooManyNonGoals
+        );
 
-        let list = |n: usize| (0..n).map(|i| format!("p{i}")).collect::<Vec<_>>().join(", ");
+        let list = |n: usize| {
+            (0..n)
+                .map(|i| format!("p{i}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
         let build = |patterns: String| {
-            format!("## Goal\ng\n\n## Non-goals\n- a\n- b\n\n## Acceptance criteria\nAC-1: x\n\n## Touchpoints\nExpected to change: {patterns}\nMust NOT change:\n")
+            format!(
+                "## Goal\ng\n\n## Non-goals\n- a\n- b\n\n## Acceptance criteria\nAC-1: x\n\n## Touchpoints\nExpected to change: {patterns}\nMust NOT change:\n"
+            )
         };
         assert!(parse(doc(&build(list(256))).as_bytes(), &id("INT-042")).is_ok());
         assert_eq!(with_sections(&build(list(257))), Status::TooManyTouchpoints);
@@ -764,9 +805,14 @@ mod tests {
             Status::InvariantsTooFew
         );
 
-        let many = (0..257).map(|i| format!("- n{i}")).collect::<Vec<_>>().join("\n");
+        let many = (0..257)
+            .map(|i| format!("- n{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
         assert_eq!(
-            parse(change_doc(&many).as_bytes(), &id("INT-043")).unwrap_err().status,
+            parse(change_doc(&many).as_bytes(), &id("INT-043"))
+                .unwrap_err()
+                .status,
             Status::TooManyInvariants
         );
     }
@@ -792,7 +838,9 @@ mod tests {
             "# INT-042: t\nOwner: @a \u{00B7} Template: intent@7 \u{00B7} Constitution: v1\n\n{SECTIONS}"
         );
         assert_eq!(
-            parse(future.as_bytes(), &id("INT-042")).unwrap_err().exit_code(),
+            parse(future.as_bytes(), &id("INT-042"))
+                .unwrap_err()
+                .exit_code(),
             3
         );
 

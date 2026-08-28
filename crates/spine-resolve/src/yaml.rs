@@ -300,10 +300,10 @@ mod tests {
     fn every_construct_outside_the_declarative_subset_is_refused() {
         for source in [
             "a: &anchor v\nb: *anchor\n",       // anchor and alias
-            "a: !tag v\n",                       // tag
-            "base: &b\n  x: 1\nc:\n  <<: *b\n",  // merge key
-            "---\na: 1\n---\nb: 2\n",            // multi-document
-            "a: |\n  block\n",                   // block scalar
+            "a: !tag v\n",                      // tag
+            "base: &b\n  x: 1\nc:\n  <<: *b\n", // merge key
+            "---\na: 1\n---\nb: 2\n",           // multi-document
+            "a: |\n  block\n",                  // block scalar
         ] {
             assert_eq!(parse(source), None, "{source:?}");
         }
@@ -341,8 +341,7 @@ mod tests {
             ("description: 'uses # hash'\n", "description", "uses # hash"),
             ("name: \"trailing\" # a real comment\n", "name", "trailing"),
         ] {
-            let parsed = parse(source)
-                .unwrap_or_else(|| panic!("{source:?} must parse"));
+            let parsed = parse(source).unwrap_or_else(|| panic!("{source:?} must parse"));
             assert_eq!(
                 parsed.get(key).and_then(Yaml::as_scalar),
                 Some(want),

@@ -450,6 +450,9 @@ mod tests {
     fn a_refusal_renders_its_line_then_its_token() {
         let r = Refusal::at(Status::EmptySection, 4);
         assert_eq!(r.to_string(), "4:empty-section");
-        assert_eq!(Refusal::whole(Status::EmptyDocument).to_string(), "empty-document");
+        assert_eq!(
+            Refusal::whole(Status::EmptyDocument).to_string(),
+            "empty-document"
+        );
     }
 }

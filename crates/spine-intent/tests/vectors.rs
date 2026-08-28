@@ -75,7 +75,10 @@ fn id_9_3s_parse_result_reproduces() {
     assert_eq!(p.template, 2);
     assert_eq!(p.title, "Invoice totals include tax");
     assert_eq!(p.owner, "@alice");
-    assert_eq!(p.ticket.as_deref(), Some("https://tracker.example.com/T-1187"));
+    assert_eq!(
+        p.ticket.as_deref(),
+        Some("https://tracker.example.com/T-1187")
+    );
     assert_eq!(p.constitution, 3);
     assert!(p.goal_present);
     assert_eq!(p.non_goal_count, 3);
@@ -138,11 +141,17 @@ fn id_9_3s_node_ids_reproduce() {
     let declares = p.declares();
     assert_eq!(declares.len(), 4);
     assert_eq!(
-        declares.iter().filter(|d| d.polarity.attr() == "expected").count(),
+        declares
+            .iter()
+            .filter(|d| d.polarity.attr() == "expected")
+            .count(),
         2
     );
     assert_eq!(
-        declares.iter().filter(|d| d.polarity.attr() == "forbidden").count(),
+        declares
+            .iter()
+            .filter(|d| d.polarity.attr() == "forbidden")
+            .count(),
         2
     );
 }
@@ -528,14 +537,24 @@ fn tm_6_3s_first_refusal_column_reproduces() {
     use spine_template::scaffold::{self, Instance};
 
     for (variant, doc_id, owner, expected_key) in [
-        (scaffold::Variant::Intent, "INT-042", "alice@example.com", "goal"),
+        (
+            scaffold::Variant::Intent,
+            "INT-042",
+            "alice@example.com",
+            "goal",
+        ),
         (
             scaffold::Variant::IntentChange,
             "INT-043",
             "alice@example.com",
             "current behavior",
         ),
-        (scaffold::Variant::IntentBug, "BUG-051", "bob@example.com", "goal"),
+        (
+            scaffold::Variant::IntentBug,
+            "BUG-051",
+            "bob@example.com",
+            "goal",
+        ),
     ] {
         let rendered = scaffold::render(
             variant,
@@ -576,7 +595,12 @@ fn tm_16_22_filling_only_the_mandatory_bodies_yields_a_parsing_document() {
     use spine_template::scaffold::{self, Instance};
 
     for (variant, doc_id, owner, parsed_variant) in [
-        (scaffold::Variant::Intent, "INT-042", "alice@example.com", Variant::Intent),
+        (
+            scaffold::Variant::Intent,
+            "INT-042",
+            "alice@example.com",
+            Variant::Intent,
+        ),
         (
             scaffold::Variant::IntentChange,
             "INT-043",
@@ -606,7 +630,9 @@ fn tm_16_22_filling_only_the_mandatory_bodies_yields_a_parsing_document() {
             out.push_str(line);
             out.push('\n');
             let fill = match spine_intent::sections::section_key(line).as_deref() {
-                Some("goal") | Some("current behavior") | Some("target behavior") => "one sentence.",
+                Some("goal") | Some("current behavior") | Some("target behavior") => {
+                    "one sentence."
+                }
                 Some("non-goals") => "- first\n- second",
                 Some("invariants") => "- stays true",
                 Some("acceptance criteria") => "AC-1: Given a, when b, then c.",
@@ -639,7 +665,11 @@ fn tm_6_2_the_scaffolded_open_questions_body_is_empty() {
 
     for (variant, doc_id, owner) in [
         (scaffold::Variant::Intent, "INT-042", "alice@example.com"),
-        (scaffold::Variant::IntentChange, "INT-043", "alice@example.com"),
+        (
+            scaffold::Variant::IntentChange,
+            "INT-043",
+            "alice@example.com",
+        ),
         (scaffold::Variant::IntentBug, "BUG-051", "bob@example.com"),
     ] {
         let rendered = scaffold::render(
@@ -653,7 +683,8 @@ fn tm_6_2_the_scaffolded_open_questions_body_is_empty() {
         )
         .unwrap();
         assert!(
-            rendered.ends_with("## Open questions (optional — must be empty before implementation)\n"),
+            rendered
+                .ends_with("## Open questions (optional — must be empty before implementation)\n"),
             "{variant}: the last heading must be Open questions with no body"
         );
     }

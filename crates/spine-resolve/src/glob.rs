@@ -686,10 +686,7 @@ mod tests {
     /// `bad-bracket`."
     #[test]
     fn a_reversed_range_is_bad_bracket() {
-        assert_eq!(
-            Pattern::parse("[z-a]").unwrap_err().token(),
-            "bad-bracket"
-        );
+        assert_eq!(Pattern::parse("[z-a]").unwrap_err().token(), "bad-bracket");
         assert!(m("[a-c]x", "bx"));
         assert!(!m("[a-c]x", "dx"));
     }
@@ -700,7 +697,10 @@ mod tests {
     #[test]
     fn a_slash_inside_a_bracket_is_bad_bracket_and_not_two_segments() {
         assert_eq!(Pattern::parse("[a/b]").unwrap_err().token(), "bad-bracket");
-        assert_eq!(Pattern::parse("x/[a/b]/y").unwrap_err().token(), "bad-bracket");
+        assert_eq!(
+            Pattern::parse("x/[a/b]/y").unwrap_err().token(),
+            "bad-bracket"
+        );
     }
 
     /// A negated bracket must not admit `/` either — a segment holds none, and

@@ -123,11 +123,7 @@ pub fn rc(tree: &dyn Tree) -> Result<Rc, LangUnclassifiable> {
 /// IR §5.3 step 2: "`extends` is followed only for a value that is a simple
 /// string beginning `./` or `../`, resolved against the extending file's
 /// directory, with the extension `.json` appended if absent."
-fn resolve_extends(
-    tree: &dyn Tree,
-    dir: &str,
-    spec: &str,
-) -> Result<String, LangUnclassifiable> {
+fn resolve_extends(tree: &dyn Tree, dir: &str, spec: &str) -> Result<String, LangUnclassifiable> {
     if !(spec.starts_with("./") || spec.starts_with("../")) {
         return Err(LangUnclassifiable::TsconfigExtendsExternal);
     }
@@ -725,7 +721,11 @@ mod tests {
             "export type * from './x';\n",
             "export { type A } from './x';\n",
         ] {
-            assert_eq!(only(source, "t.ts", &tree, &rc), Disposition::TypeOnly, "{source}");
+            assert_eq!(
+                only(source, "t.ts", &tree, &rc),
+                Disposition::TypeOnly,
+                "{source}"
+            );
         }
         // T6: one value binding makes the whole site ordinary.
         assert_eq!(
@@ -751,7 +751,11 @@ mod tests {
             "export { a } from './x';\n",
             "export { default as d } from './x';\n",
         ] {
-            assert_eq!(only(source, "t.ts", &tree, &Rc::default()), repo("x.ts"), "{source}");
+            assert_eq!(
+                only(source, "t.ts", &tree, &Rc::default()),
+                repo("x.ts"),
+                "{source}"
+            );
         }
         // An `export` with no `from` clause names no module and is no site.
         assert!(sites("export const a = 1;\n", "t.ts", &tree, &Rc::default()).is_empty());
@@ -765,7 +769,10 @@ mod tests {
     fn t9_and_t10_a_literal_dynamic_import_resolves_and_a_computed_one_does_not() {
         let tree = MapTree::new([("x.ts", ""), ("t.ts", "")]);
         let rc = Rc::default();
-        assert_eq!(only("await import('./x');\n", "t.ts", &tree, &rc), repo("x.ts"));
+        assert_eq!(
+            only("await import('./x');\n", "t.ts", &tree, &rc),
+            repo("x.ts")
+        );
         assert_eq!(
             only("await import(name);\n", "t.ts", &tree, &rc),
             Disposition::Unresolvable(Unresolvable::DynamicImport)
@@ -789,7 +796,12 @@ mod tests {
     #[test]
     fn an_import_equals_require_is_one_site_and_not_two() {
         let tree = MapTree::new([("x.ts", ""), ("t.ts", "")]);
-        let found = sites("import x = require('./x');\n", "t.ts", &tree, &Rc::default());
+        let found = sites(
+            "import x = require('./x');\n",
+            "t.ts",
+            &tree,
+            &Rc::default(),
+        );
         assert_eq!(found.len(), 1, "{found:?}");
         assert_eq!(found[0].disposition, repo("x.ts"));
     }
@@ -858,7 +870,12 @@ mod tests {
     fn t18_a_json_import_resolves() {
         let tree = MapTree::new([("x.json", "{}"), ("t.ts", "")]);
         assert_eq!(
-            only("import data from './x.json';\n", "t.ts", &tree, &Rc::default()),
+            only(
+                "import data from './x.json';\n",
+                "t.ts",
+                &tree,
+                &Rc::default()
+            ),
             repo("x.json")
         );
     }
@@ -905,7 +922,11 @@ mod tests {
     /// `lang-unclassifiable`, reason `tsconfig-extends-external`."
     #[test]
     fn t21_a_bare_or_absolute_or_array_extends_is_external() {
-        for value in ["\"@company/tsconfig\"", "\"/abs/tsconfig.json\"", "[\"./a\"]"] {
+        for value in [
+            "\"@company/tsconfig\"",
+            "\"/abs/tsconfig.json\"",
+            "[\"./a\"]",
+        ] {
             let tree = MapTree::new([("tsconfig.json", format!("{{\"extends\":{value}}}"))]);
             assert_eq!(
                 rc(&tree).unwrap_err(),
@@ -983,10 +1004,10 @@ mod tests {
         );
 
         for paths in [
-            r#"{"@a/*":"src/a/*"}"#,          // value is not an array
-            r#"{"@a/*":[1]}"#,                // array item is not a string
-            r#"{"@a/*/*":["src/a/*"]}"#,      // two stars in the key
-            r#"{"@a/*":["src/*/*"]}"#,        // two stars in a substitution
+            r#"{"@a/*":"src/a/*"}"#,     // value is not an array
+            r#"{"@a/*":[1]}"#,           // array item is not a string
+            r#"{"@a/*/*":["src/a/*"]}"#, // two stars in the key
+            r#"{"@a/*":["src/*/*"]}"#,   // two stars in a substitution
         ] {
             let tree = MapTree::new([(
                 "tsconfig.json",
@@ -1054,7 +1075,10 @@ mod tests {
             ("t.ts", ""),
         ]);
         let rc = rc(&tree).unwrap();
-        assert_eq!(only("import '@x/y';\n", "t.ts", &tree, &rc), repo("found/y.ts"));
+        assert_eq!(
+            only("import '@x/y';\n", "t.ts", &tree, &rc),
+            repo("found/y.ts")
+        );
     }
 
     /// IR §5.1: a triple-slash reference directive "is a `type_only` import
@@ -1076,7 +1100,12 @@ mod tests {
     fn every_site_in_a_declaration_file_is_type_only() {
         let tree = MapTree::new([("x.ts", ""), ("types/t.d.ts", "")]);
         assert_eq!(
-            only("import { a } from '../x';\n", "types/t.d.ts", &tree, &Rc::default()),
+            only(
+                "import { a } from '../x';\n",
+                "types/t.d.ts",
+                &tree,
+                &Rc::default()
+            ),
             Disposition::TypeOnly
         );
     }
@@ -1096,7 +1125,12 @@ mod tests {
     fn a_relative_specifier_escaping_the_root_is_refused_and_never_clamped() {
         let tree = MapTree::new([("src/t.ts", "")]);
         assert_eq!(
-            only("import '../../etc/passwd';\n", "src/t.ts", &tree, &Rc::default()),
+            only(
+                "import '../../etc/passwd';\n",
+                "src/t.ts",
+                &tree,
+                &Rc::default()
+            ),
             Disposition::Unresolvable(Unresolvable::RelativeEscapesRoot)
         );
     }
@@ -1161,7 +1195,12 @@ mod tests {
             ("src/a.ts", ""),
             ("src/main.ts", ""),
         ]);
-        let found = sites("export { X } from './a';\n", "src/main.ts", &tree, &rc(&tree).unwrap());
+        let found = sites(
+            "export { X } from './a';\n",
+            "src/main.ts",
+            &tree,
+            &rc(&tree).unwrap(),
+        );
         assert_eq!(found.len(), 1);
         assert_eq!(
             found[0].disposition,

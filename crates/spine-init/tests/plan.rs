@@ -26,7 +26,10 @@ impl MemTree {
 
 impl plan::TreeSource for MemTree {
     fn read(&self, path: &str) -> Option<Vec<u8>> {
-        self.0.iter().find(|(p, _)| p == path).map(|(_, c)| c.clone())
+        self.0
+            .iter()
+            .find(|(p, _)| p == path)
+            .map(|(_, c)| c.clone())
     }
     fn object_format(&self) -> ObjectFormat {
         ObjectFormat::Sha1
@@ -109,10 +112,7 @@ fn manifest_with(records: &[(&str, Owner, &str, &str)]) -> spine_manifest::Manif
         ),
         (
             "paths",
-            spine_canon::Value::obj([(
-                "constitution",
-                spine_canon::Value::str("CONSTITUTION.md"),
-            )]),
+            spine_canon::Value::obj([("constitution", spine_canon::Value::str("CONSTITUTION.md"))]),
         ),
         ("repo", spine_canon::Value::str("myrepo")),
         (
@@ -153,7 +153,12 @@ fn manifest_with(records: &[(&str, Owner, &str, &str)]) -> spine_manifest::Manif
 fn a_first_init_creates_every_path() {
     let tree = MemTree::new(&[]);
     let desired = vec![
-        want(".spine/ci.sh", Owner::SpineOwned, "ci-generic@4", "#!/bin/sh\n"),
+        want(
+            ".spine/ci.sh",
+            Owner::SpineOwned,
+            "ci-generic@4",
+            "#!/bin/sh\n",
+        ),
         want(
             "CONSTITUTION.md",
             Owner::UserOwned,
@@ -195,7 +200,12 @@ fn a_clean_spine_owned_path_updates_when_the_render_moves() {
     let old = "#!/bin/sh\nold\n";
     let new = "#!/bin/sh\nnew\n";
     let tree = MemTree::new(&[(".spine/ci.sh", old)]);
-    let previous = manifest_with(&[(".spine/ci.sh", Owner::SpineOwned, "ci-generic@4", &blob(old))]);
+    let previous = manifest_with(&[(
+        ".spine/ci.sh",
+        Owner::SpineOwned,
+        "ci-generic@4",
+        &blob(old),
+    )]);
     let desired = vec![want(".spine/ci.sh", Owner::SpineOwned, "ci-generic@4", new)];
 
     let plan = plan::compute(&tree, &desired, Some(&previous), &versions);
@@ -211,9 +221,18 @@ fn a_clean_spine_owned_path_updates_when_the_render_moves() {
 fn an_unchanged_render_skips() {
     let same = "#!/bin/sh\nsame\n";
     let tree = MemTree::new(&[(".spine/ci.sh", same)]);
-    let previous =
-        manifest_with(&[(".spine/ci.sh", Owner::SpineOwned, "ci-generic@4", &blob(same))]);
-    let desired = vec![want(".spine/ci.sh", Owner::SpineOwned, "ci-generic@4", same)];
+    let previous = manifest_with(&[(
+        ".spine/ci.sh",
+        Owner::SpineOwned,
+        "ci-generic@4",
+        &blob(same),
+    )]);
+    let desired = vec![want(
+        ".spine/ci.sh",
+        Owner::SpineOwned,
+        "ci-generic@4",
+        same,
+    )];
 
     let plan = plan::compute(&tree, &desired, Some(&previous), &versions);
     assert_eq!(plan.rows[0].action, Action::Skip);
@@ -232,7 +251,12 @@ fn one_diverged_spine_owned_path_refuses_the_whole_plan() {
         ("CONSTITUTION.md", "# Constitution — myrepo\n"),
     ]);
     let previous = manifest_with(&[
-        (".spine/ci.sh", Owner::SpineOwned, "ci-generic@4", &blob(recorded)),
+        (
+            ".spine/ci.sh",
+            Owner::SpineOwned,
+            "ci-generic@4",
+            &blob(recorded),
+        ),
         (
             "CONSTITUTION.md",
             Owner::UserOwned,
@@ -241,7 +265,12 @@ fn one_diverged_spine_owned_path_refuses_the_whole_plan() {
         ),
     ]);
     let desired = vec![
-        want(".spine/ci.sh", Owner::SpineOwned, "ci-generic@4", "#!/bin/sh\nnew\n"),
+        want(
+            ".spine/ci.sh",
+            Owner::SpineOwned,
+            "ci-generic@4",
+            "#!/bin/sh\nnew\n",
+        ),
         want(
             "CONSTITUTION.md",
             Owner::UserOwned,
@@ -285,7 +314,10 @@ fn a_user_owned_path_is_never_rewritten_however_far_it_has_drifted() {
     let plan = plan::compute(&tree, &desired, Some(&previous), &versions);
     assert_eq!(plan.rows[0].state, State::Modified);
     assert_eq!(plan.rows[0].action, Action::Skip);
-    assert!(!plan.refuses(), "a drifted user-owned file is not a refusal");
+    assert!(
+        !plan.refuses(),
+        "a drifted user-owned file is not a refusal"
+    );
 }
 
 /// A `user-owned` seed the human deleted is not re-seeded — "never touched
@@ -300,7 +332,12 @@ fn a_deleted_user_owned_seed_is_not_recreated() {
         "constitution@1",
         &blob(seed),
     )]);
-    let desired = vec![want("CONSTITUTION.md", Owner::UserOwned, "constitution@1", seed)];
+    let desired = vec![want(
+        "CONSTITUTION.md",
+        Owner::UserOwned,
+        "constitution@1",
+        seed,
+    )];
 
     let plan = plan::compute(&tree, &desired, Some(&previous), &versions);
     assert_eq!(plan.rows[0].action, Action::Skip);
@@ -337,7 +374,12 @@ fn a_user_modified_path_is_never_rewritten_silently() {
 #[test]
 fn a_foreign_file_at_a_spine_owned_path_refuses() {
     let tree = MemTree::new(&[(".spine/ci.sh", "someone else's script\n")]);
-    let desired = vec![want(".spine/ci.sh", Owner::SpineOwned, "ci-generic@4", "#!/bin/sh\n")];
+    let desired = vec![want(
+        ".spine/ci.sh",
+        Owner::SpineOwned,
+        "ci-generic@4",
+        "#!/bin/sh\n",
+    )];
 
     let plan = plan::compute(&tree, &desired, None, &versions);
     assert_eq!(plan.rows[0].state, State::Foreign);
@@ -435,7 +477,12 @@ fn a_genuinely_removed_region_is_recreated() {
 #[test]
 fn a_host_file_whose_name_contains_a_hash_refuses() {
     let tree = MemTree::new(&[]);
-    let desired = vec![want("weird#name#spine", Owner::SpineOwned, "gitignore@1", "x\n")];
+    let desired = vec![want(
+        "weird#name#spine",
+        Owner::SpineOwned,
+        "gitignore@1",
+        "x\n",
+    )];
     let plan = plan::compute(&tree, &desired, None, &versions);
     assert_eq!(plan.rows[0].action, Action::Refuse);
     assert_eq!(plan.rows[0].reason, Some(RefuseReason::PathHashAmbiguous));
@@ -468,12 +515,27 @@ fn a_provider_change_deletes_only_the_spine_owned_paths_it_retires() {
             "ci-github-land@4",
             &blob(land),
         ),
-        (".spine/ci.sh", Owner::SpineOwned, "ci-generic@4", &blob("#!/bin/sh\n")),
+        (
+            ".spine/ci.sh",
+            Owner::SpineOwned,
+            "ci-generic@4",
+            &blob("#!/bin/sh\n"),
+        ),
     ]);
     // The new render set is the gitlab one: ci.sh stays, the workflows go.
     let desired = vec![
-        want(".spine/ci.sh", Owner::SpineOwned, "ci-generic@4", "#!/bin/sh\n"),
-        want(".gitlab-ci.yml", Owner::SpineOwned, "ci-gitlab@4", "stages:\n"),
+        want(
+            ".spine/ci.sh",
+            Owner::SpineOwned,
+            "ci-generic@4",
+            "#!/bin/sh\n",
+        ),
+        want(
+            ".gitlab-ci.yml",
+            Owner::SpineOwned,
+            "ci-gitlab@4",
+            "stages:\n",
+        ),
     ];
 
     let plan = plan::compute(&tree, &desired, Some(&previous), &versions);
@@ -500,9 +562,24 @@ fn a_provider_change_deletes_only_the_spine_owned_paths_it_retires() {
 #[test]
 fn a_development_build_refuses_every_row() {
     let desired = vec![
-        want(".spine/ci.sh", Owner::SpineOwned, "ci-generic@4", "#!/bin/sh\n"),
-        want("CONSTITUTION.md", Owner::UserOwned, "constitution@1", "# C\n"),
-        want("AGENTS.md#spine", Owner::SpineOwned, "agents-block@2", "x\n"),
+        want(
+            ".spine/ci.sh",
+            Owner::SpineOwned,
+            "ci-generic@4",
+            "#!/bin/sh\n",
+        ),
+        want(
+            "CONSTITUTION.md",
+            Owner::UserOwned,
+            "constitution@1",
+            "# C\n",
+        ),
+        want(
+            "AGENTS.md#spine",
+            Owner::SpineOwned,
+            "agents-block@2",
+            "x\n",
+        ),
     ];
     let plan = plan::development_build_plan(&desired);
 
@@ -522,7 +599,12 @@ fn a_development_build_refuses_every_row() {
 #[test]
 fn the_status_line_has_the_four_fields_pb_6_7_fixes() {
     let tree = MemTree::new(&[]);
-    let desired = vec![want(".spine/ci.sh", Owner::SpineOwned, "ci-generic@4", "#!/bin/sh\n")];
+    let desired = vec![want(
+        ".spine/ci.sh",
+        Owner::SpineOwned,
+        "ci-generic@4",
+        "#!/bin/sh\n",
+    )];
     let plan = plan::compute(&tree, &desired, None, &versions);
     assert_eq!(
         plan.rows[0].status_line(),

@@ -426,7 +426,11 @@ pub enum WriteRefusal {
 impl core::fmt::Display for WriteRefusal {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            WriteRefusal::DuplicatePair { section, runner, id } => write!(
+            WriteRefusal::DuplicatePair {
+                section,
+                runner,
+                id,
+            } => write!(
                 f,
                 "two {section} records share the pair ({runner}, {id}); \
                  RF §11 item 5 makes pair uniqueness the writer's obligation too"

@@ -245,7 +245,11 @@ impl Keyring {
             .collect();
         signoff.sort_unstable();
         signoff.dedup();
-        let mode = if signoff.len() == 1 { Mode::Solo } else { Mode::Team };
+        let mode = if signoff.len() == 1 {
+            Mode::Solo
+        } else {
+            Mode::Team
+        };
 
         cross_entry_lints(&entries, mode, &mut findings);
 
@@ -364,7 +368,8 @@ fn parse_entry(line: &str, line_no: usize) -> EntryResult {
     // [WS comment]. The options field is the one that can contain a quoted
     // list with spaces in it, so split it out by quote-awareness rather than
     // by whitespace alone.
-    let (principals, rest) = split_ws_once(line).ok_or_else(|| malformed("no fields after the principal"))?;
+    let (principals, rest) =
+        split_ws_once(line).ok_or_else(|| malformed("no fields after the principal"))?;
 
     // The option field is **optional** in OpenSSH's format, and a line that
     // omits it is precisely `keyring-no-namespaces` — §4.4's reason being that
@@ -399,7 +404,11 @@ fn parse_entry(line: &str, line_no: usize) -> EntryResult {
             format!("{principals} names more than one principal"),
         ));
     }
-    let principal = principals.split(',').next().unwrap_or(principals).to_string();
+    let principal = principals
+        .split(',')
+        .next()
+        .unwrap_or(principals)
+        .to_string();
     if principal.is_empty() || principal.contains('#') {
         return Err(malformed("principal is empty or contains '#'"));
     }

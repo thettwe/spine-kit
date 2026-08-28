@@ -173,7 +173,10 @@ pub enum VerifyError {
     Io(std::io::Error),
     /// `ssh-keygen -Y verify` exited non-zero: the signature, the principal, the
     /// namespace or the keyring did not agree.
-    NotVerified { status: Option<i32>, stderr: String },
+    NotVerified {
+        status: Option<i32>,
+        stderr: String,
+    },
     /// A principal that could be read as an `ssh-keygen` option. Refused before
     /// the process is spawned rather than passed through.
     UnusablePrincipal(String),
@@ -183,11 +186,18 @@ impl fmt::Display for VerifyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             VerifyError::OpenSshUnavailable(e) => {
-                write!(f, "ssh-keygen could not be run (PB §11 requires OpenSSH ≥ 8.2): {e}")
+                write!(
+                    f,
+                    "ssh-keygen could not be run (PB §11 requires OpenSSH ≥ 8.2): {e}"
+                )
             }
             VerifyError::Io(e) => write!(f, "{e}"),
             VerifyError::NotVerified { status, stderr } => {
-                write!(f, "signature did not verify (exit {status:?}): {}", stderr.trim())
+                write!(
+                    f,
+                    "signature did not verify (exit {status:?}): {}",
+                    stderr.trim()
+                )
             }
             VerifyError::UnusablePrincipal(p) => write!(f, "unusable principal: {p}"),
         }
@@ -287,10 +297,7 @@ impl TempDir {
     fn new() -> std::io::Result<Self> {
         static COUNTER: AtomicU64 = AtomicU64::new(0);
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let path = std::env::temp_dir().join(format!(
-            "spine-envelope-{}-{n}",
-            std::process::id()
-        ));
+        let path = std::env::temp_dir().join(format!("spine-envelope-{}-{n}", std::process::id()));
         std::fs::create_dir_all(&path)?;
         Ok(TempDir(path))
     }

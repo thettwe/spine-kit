@@ -35,9 +35,8 @@ pub fn check_cli_version(s: &str) -> Result<(), Refusal> {
     let ok = !s.is_empty()
         && s.len() <= 64
         && s != "none"
-        && s.bytes().all(|b| {
-            b.is_ascii_alphanumeric() || b == b'.' || b == b'_' || b == b'+' || b == b'-'
-        });
+        && s.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_' || b == b'+' || b == b'-');
     if ok {
         Ok(())
     } else {
@@ -108,9 +107,8 @@ pub fn check_region_key(s: &str) -> Result<(), Refusal> {
     let ok = match bytes.next() {
         Some(first) if first.is_ascii_lowercase() => {
             s.len() <= 64
-                && bytes.all(|b| {
-                    b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-'
-                })
+                && bytes
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
         }
         _ => false,
     };
@@ -286,7 +284,9 @@ mod tests {
         );
         // A sha1-length id in a sha256 repository is the wrong width.
         assert_eq!(
-            check_blob(full, ObjectFormat::Sha256, "x").unwrap_err().status,
+            check_blob(full, ObjectFormat::Sha256, "x")
+                .unwrap_err()
+                .status,
             Status::BlobMalformed
         );
         // Uppercase hex is not git's spelling.
@@ -307,7 +307,10 @@ mod tests {
             "src/a=b.ts",
             r"caf\xc3\xa9.py",
         ] {
-            assert!(check_repo_path(good, "x").is_ok(), "{good:?} should be legal");
+            assert!(
+                check_repo_path(good, "x").is_ok(),
+                "{good:?} should be legal"
+            );
         }
         for bad in [
             "",
@@ -332,7 +335,10 @@ mod tests {
     #[test]
     fn the_region_split_is_total_and_takes_the_last_hash() {
         assert_eq!(split_region("AGENTS.md"), ("AGENTS.md", None));
-        assert_eq!(split_region("AGENTS.md#spine"), ("AGENTS.md", Some("spine")));
+        assert_eq!(
+            split_region("AGENTS.md#spine"),
+            ("AGENTS.md", Some("spine"))
+        );
         assert_eq!(split_region("a#b#c"), ("a#b", Some("c")));
         assert_eq!(split_region("#k"), ("", Some("k")));
     }
@@ -370,7 +376,16 @@ mod tests {
             ("ci-github-collect", 4)
         );
         // README decision 4 of 2026-08-26: never a bare `v2`.
-        for bad in ["v2", "intent", "intent@", "intent@0", "intent@01", "intent@x", "Intent@2", "intent_bug@2"] {
+        for bad in [
+            "v2",
+            "intent",
+            "intent@",
+            "intent@0",
+            "intent@01",
+            "intent@x",
+            "Intent@2",
+            "intent_bug@2",
+        ] {
             assert_eq!(
                 parse_template_ref(bad).unwrap_err().status,
                 Status::TemplateMalformed,
@@ -385,8 +400,25 @@ mod tests {
             assert!(check_branch_name(good).is_ok(), "{good:?} should be legal");
         }
         for bad in [
-            "", "-lead", "/lead", "trail/", "trail.", "x.lock", "@", "a..b", "a@{b", "a//b",
-            "a b", "a~b", "a^b", "a:b", "a?b", "a*b", "a[b", r"a\\b", "a/.hidden",
+            "",
+            "-lead",
+            "/lead",
+            "trail/",
+            "trail.",
+            "x.lock",
+            "@",
+            "a..b",
+            "a@{b",
+            "a//b",
+            "a b",
+            "a~b",
+            "a^b",
+            "a:b",
+            "a?b",
+            "a*b",
+            "a[b",
+            r"a\\b",
+            "a/.hidden",
         ] {
             assert_eq!(
                 check_branch_name(bad).unwrap_err().status,

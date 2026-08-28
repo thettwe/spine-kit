@@ -299,7 +299,12 @@ mod tests {
     #[test]
     fn a_trunk_name_that_collides_with_a_token_is_refused_where_it_is_given() {
         let release = ReleaseManifest::parse(FIXTURE.as_bytes()).unwrap();
-        for name in ["@@", "release@@2026", "PIN_CHECKOUT", "x-PIN_UPLOAD_ARTIFACT"] {
+        for name in [
+            "@@",
+            "release@@2026",
+            "PIN_CHECKOUT",
+            "x-PIN_UPLOAD_ARTIFACT",
+        ] {
             assert_eq!(
                 Table::build(&release, name).unwrap_err(),
                 RenderError::TrunkNameCollidesWithToken(name.to_string()),

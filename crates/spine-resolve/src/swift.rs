@@ -124,9 +124,9 @@ pub fn rc(tree: &dyn Tree) -> Result<Rc, LangUnclassifiable> {
         //    and no `Package.swift` → unclassifiable, reason
         //    `xcode-project-unsupported`."
         if tree.entries().iter().any(|e| {
-            e.path.split('/').any(|segment| {
-                segment.ends_with(".xcodeproj") || segment.ends_with(".xcworkspace")
-            })
+            e.path
+                .split('/')
+                .any(|segment| segment.ends_with(".xcodeproj") || segment.ends_with(".xcworkspace"))
         }) {
             return Err(LangUnclassifiable::XcodeProjectUnsupported);
         }
@@ -314,8 +314,8 @@ fn parse_target(
             //    ternary, `#if`, `for`, `map`, or function call in those
             //    positions → unclassifiable, reason `manifest-not-literal`."
             "name" | "path" => {
-                let literals = literal_strings(source, value)
-                    .ok_or(LangUnclassifiable::ManifestNotLiteral)?;
+                let literals =
+                    literal_strings(source, value).ok_or(LangUnclassifiable::ManifestNotLiteral)?;
                 let [one] = literals.as_slice() else {
                     return Err(LangUnclassifiable::ManifestNotLiteral);
                 };
@@ -326,8 +326,8 @@ fn parse_target(
                 }
             }
             "sources" | "exclude" => {
-                let literals = literal_strings(source, value)
-                    .ok_or(LangUnclassifiable::ManifestNotLiteral)?;
+                let literals =
+                    literal_strings(source, value).ok_or(LangUnclassifiable::ManifestNotLiteral)?;
                 if label == "sources" {
                     sources = literals;
                 } else {
@@ -507,7 +507,10 @@ fn split_top_level<'a>(source: &str, tokens: &'a [Token]) -> Vec<&'a [Token]> {
 /// nothing else. `None` is rule 3's `manifest-not-literal`.
 fn literal_strings(source: &str, value: &[Token]) -> Option<Vec<String>> {
     if value.len() == 1 {
-        return value.first()?.simple_literal(source).map(|s| vec![s.to_string()]);
+        return value
+            .first()?
+            .simple_literal(source)
+            .map(|s| vec![s.to_string()]);
     }
     if !value.first()?.is_punct(source, b'[') || !value.last()?.is_punct(source, b']') {
         return None;
@@ -633,17 +636,17 @@ mod tests {
         let tree = tree_of(&[
             (
                 "Package.swift",
-                &manifest("\n        .target(name: \"M\"),\n        .testTarget(name: \"MTests\")\n    "),
+                &manifest(
+                    "\n        .target(name: \"M\"),\n        .testTarget(name: \"MTests\")\n    ",
+                ),
             ),
             ("Sources/M/A.swift", ""),
             ("Sources/M/B.swift", ""),
             ("Tests/MTests/T.swift", ""),
         ]);
         let rc = rc(&tree).unwrap();
-        let expected = Disposition::Repo(vec![
-            "Sources/M/A.swift".into(),
-            "Sources/M/B.swift".into(),
-        ]);
+        let expected =
+            Disposition::Repo(vec!["Sources/M/A.swift".into(), "Sources/M/B.swift".into()]);
         for source in [
             "import M\n",
             "@testable import M\n",
@@ -858,10 +861,7 @@ mod tests {
             ("Sources/Billing/Invoice.swift", ""),
             ("Sources/Billing/Legacy.m", ""),
         ]);
-        assert_eq!(
-            rc(&tree).unwrap_err(),
-            LangUnclassifiable::MixedObjcTarget
-        );
+        assert_eq!(rc(&tree).unwrap_err(), LangUnclassifiable::MixedObjcTarget);
     }
 
     /// Case S13: "A target every entry of whose file set ends in `.swift` … |
@@ -893,12 +893,12 @@ mod tests {
     #[test]
     fn s14_a_bridging_header_triggers_by_its_extension_and_not_by_its_stem() {
         let tree = tree_of(&[
-            ("Package.swift", &manifest(".testTarget(name: \"BillingTests\")")),
-            ("Tests/BillingTests/T.swift", ""),
             (
-                "Tests/BillingTests/BillingTests-Bridging-Header.h",
-                "",
+                "Package.swift",
+                &manifest(".testTarget(name: \"BillingTests\")"),
             ),
+            ("Tests/BillingTests/T.swift", ""),
+            ("Tests/BillingTests/BillingTests-Bridging-Header.h", ""),
         ]);
         assert_eq!(rc(&tree).unwrap_err(), LangUnclassifiable::MixedObjcTarget);
     }
@@ -1088,7 +1088,10 @@ mod tests {
         let rc = rc(&tree).expect("a `.product` is not an error");
         // `"M"` (bare) and `.target(name: "M")` are read; `.product(…)` is not,
         // and its `name:` literal is not a target dependency.
-        assert_eq!(rc.target("MTests").unwrap().dependencies, ["M", "M", "Other"]);
+        assert_eq!(
+            rc.target("MTests").unwrap().dependencies,
+            ["M", "M", "Other"]
+        );
     }
 
     /// IR §7.4's consequence, stated honestly: "a target with two or more files

@@ -76,13 +76,11 @@ fn fence_mismatch_when_the_byte_count_does_not_land_on_the_end_line() {
 
 #[test]
 fn subject_mismatch_when_a_gated_subject_is_not_the_derived_line() {
-    let m = String::from_utf8(A_MESSAGE.to_vec())
-        .unwrap()
-        .replacen(
-            "INT-042: Invoice totals include tax\n\n-----BEGIN",
-            "INT-042: invoice totals include tax\n\n-----BEGIN",
-            1,
-        );
+    let m = String::from_utf8(A_MESSAGE.to_vec()).unwrap().replacen(
+        "INT-042: Invoice totals include tax\n\n-----BEGIN",
+        "INT-042: invoice totals include tax\n\n-----BEGIN",
+        1,
+    );
     let env = Envelope::parse(m.as_bytes()).unwrap();
     assert_eq!(
         env.check_subject().unwrap_err().refusal(),
@@ -103,9 +101,11 @@ fn a_reseal_subject_carries_the_full_object_id() {
     );
     env.check_subject().unwrap();
 
-    let short = String::from_utf8(reseal(4))
-        .unwrap()
-        .replacen(&format!("reseal: {OID_B}"), "reseal: 77aa3c1", 1);
+    let short = String::from_utf8(reseal(4)).unwrap().replacen(
+        &format!("reseal: {OID_B}"),
+        "reseal: 77aa3c1",
+        1,
+    );
     assert_eq!(
         Envelope::parse(short.as_bytes())
             .unwrap()
@@ -156,7 +156,8 @@ fn envelope_too_large_above_the_cap() {
     let big = reseal(0).len();
     let m = String::from_utf8(reseal(CAP - big + 64)).unwrap();
     // Same bytes, but a shape the cap governs.
-    let capped = m.replace("Spine-Event: reseal", "Spine-Event: land")
+    let capped = m
+        .replace("Spine-Event: reseal", "Spine-Event: land")
         .replace("Spine-Review: reseal ", "Spine-Review: quick ")
         .replace("Spine-Seal: reseal ", "Spine-Seal: quick ")
         .replacen(&format!("reseal: {OID_B}"), "quick: a long one", 1);
@@ -194,9 +195,10 @@ fn a_reseal_carries_no_fenced_intent_and_no_signoff() {
 fn a_frozen_path_that_is_badly_quoted_is_envelope_malformed() {
     // EV §4.3: "unterminated, a bad escape, a trailing byte after the closing
     // quote".
-    let m = String::from_utf8(A_MESSAGE.to_vec())
-        .unwrap()
-        .replace("Spine-Review: INT-042", "Spine-Frozen: 0c3a7f18e2b56d94a0c7f3e18b52d6a4907c1e3f \"a\\q\"\nSpine-Review: INT-042");
+    let m = String::from_utf8(A_MESSAGE.to_vec()).unwrap().replace(
+        "Spine-Review: INT-042",
+        "Spine-Frozen: 0c3a7f18e2b56d94a0c7f3e18b52d6a4907c1e3f \"a\\q\"\nSpine-Review: INT-042",
+    );
     let e = Envelope::parse(m.as_bytes()).unwrap_err();
     assert_eq!(e.refusal(), Refusal::EnvelopeMalformed);
 }
@@ -207,14 +209,16 @@ fn a_manifest_out_of_freeze_order_is_envelope_malformed() {
     // "can check the order as well as the value".
     let a = "Spine-Frozen: 0a12f7d3e5b96c08a41d7e2f39c05b6a8d14e037 tests/a.py";
     let b = "Spine-Frozen: 7f3aa0c19b48d6250e3f7a1c85b09d24e6f31a70 tests/z.py";
-    let ordered = String::from_utf8(A_MESSAGE.to_vec())
-        .unwrap()
-        .replace("Spine-Review: INT-042", &format!("{a}\n{b}\nSpine-Review: INT-042"));
+    let ordered = String::from_utf8(A_MESSAGE.to_vec()).unwrap().replace(
+        "Spine-Review: INT-042",
+        &format!("{a}\n{b}\nSpine-Review: INT-042"),
+    );
     Envelope::parse(ordered.as_bytes()).unwrap();
 
-    let reversed = String::from_utf8(A_MESSAGE.to_vec())
-        .unwrap()
-        .replace("Spine-Review: INT-042", &format!("{b}\n{a}\nSpine-Review: INT-042"));
+    let reversed = String::from_utf8(A_MESSAGE.to_vec()).unwrap().replace(
+        "Spine-Review: INT-042",
+        &format!("{b}\n{a}\nSpine-Review: INT-042"),
+    );
     assert_eq!(
         Envelope::parse(reversed.as_bytes()).unwrap_err().refusal(),
         Refusal::EnvelopeMalformed
@@ -224,9 +228,11 @@ fn a_manifest_out_of_freeze_order_is_envelope_malformed() {
 #[test]
 fn a_sig_payload_that_is_not_one_base64_run_is_envelope_malformed() {
     // EV §18 item 15.
-    let m = String::from_utf8(A_MESSAGE.to_vec())
-        .unwrap()
-        .replacen("Spine-Seal-Sig: U1NIU0lH", "Spine-Seal-Sig: -----BEGIN", 1);
+    let m = String::from_utf8(A_MESSAGE.to_vec()).unwrap().replacen(
+        "Spine-Seal-Sig: U1NIU0lH",
+        "Spine-Seal-Sig: -----BEGIN",
+        1,
+    );
     assert_eq!(
         Envelope::parse(m.as_bytes()).unwrap_err().refusal(),
         Refusal::EnvelopeMalformed

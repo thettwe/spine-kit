@@ -162,10 +162,13 @@ fn no_candidate_controlled_value_is_interpolated_into_a_run_script() {
         }
     }
     // And the two candidate-named values arrive as `env:` bindings instead.
-    assert!(CI_GITHUB_COLLECT
-        .contains("SPINE_CANDIDATE: ${{ github.event.pull_request.head.ref }}"));
-    assert!(CI_GITHUB_COLLECT
-        .contains("SPINE_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}"));
+    assert!(
+        CI_GITHUB_COLLECT.contains("SPINE_CANDIDATE: ${{ github.event.pull_request.head.ref }}")
+    );
+    assert!(
+        CI_GITHUB_COLLECT
+            .contains("SPINE_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}")
+    );
     assert!(
         CI_GITHUB_LAND.contains("SPINE_CANDIDATE: ${{ github.event.workflow_run.head_branch }}")
     );
@@ -199,11 +202,7 @@ fn every_definition_reads_ci_sh_from_origin_trunk() {
     for (name, body, trunk_var) in [
         ("spine-collect.yml", CI_GITHUB_COLLECT, "$SPINE_TRUNK"),
         ("spine-land.yml", CI_GITHUB_LAND, "$SPINE_TRUNK"),
-        (
-            "gitlab/untrusted.yml",
-            CI_GITLAB_UNTRUSTED,
-            "$SPINE_TRUNK",
-        ),
+        ("gitlab/untrusted.yml", CI_GITLAB_UNTRUSTED, "$SPINE_TRUNK"),
         ("gitlab/trusted.yml", CI_GITLAB_TRUSTED, "$SPINE_TRUNK"),
     ] {
         assert!(
@@ -267,7 +266,9 @@ fn the_lander_guards_workflow_run_with_three_facts_a_candidate_cannot_forge() {
     // T1/T2: a trunk-scoped event and an environment whose deployment-branch
     // rule is trunk only (§7.4).
     assert!(CI_GITHUB_LAND.contains("environment: spine-trusted"));
-    assert!(CI_GITHUB_LAND.contains("concurrency:\n  group: spine-land\n  cancel-in-progress: false"));
+    assert!(
+        CI_GITHUB_LAND.contains("concurrency:\n  group: spine-land\n  cancel-in-progress: false")
+    );
 }
 
 /// T7 and §7.3's third detail: "the bypass principal of configuration (a) is a
@@ -352,8 +353,10 @@ fn the_gitlab_root_includes_both_job_files_at_trunk() {
 #[test]
 fn the_gitlab_collector_runs_only_on_merge_requests_for_candidate_refs() {
     assert!(CI_GITLAB_UNTRUSTED.contains("$CI_PIPELINE_SOURCE == \"merge_request_event\""));
-    assert!(CI_GITLAB_UNTRUSTED
-        .contains("$CI_COMMIT_REF_NAME =~ /^(intent\\/|quick\\/|spine\\/upgrade-)/"));
+    assert!(
+        CI_GITLAB_UNTRUSTED
+            .contains("$CI_COMMIT_REF_NAME =~ /^(intent\\/|quick\\/|spine\\/upgrade-)/")
+    );
     assert!(CI_GITLAB_UNTRUSTED.contains("- when: never"));
     assert!(CI_GITLAB_UNTRUSTED.contains("interruptible: true"));
 }
@@ -363,8 +366,10 @@ fn the_gitlab_collector_runs_only_on_merge_requests_for_candidate_refs() {
 /// CAS and the note push is exit 5's case with nobody to see it" (§8.4).
 #[test]
 fn the_gitlab_lander_runs_only_on_a_schedule_on_trunk_and_is_uninterruptible() {
-    assert!(CI_GITLAB_TRUSTED
-        .contains("$CI_PIPELINE_SOURCE == \"schedule\" && $CI_COMMIT_REF_NAME == \"main\""));
+    assert!(
+        CI_GITLAB_TRUSTED
+            .contains("$CI_PIPELINE_SOURCE == \"schedule\" && $CI_COMMIT_REF_NAME == \"main\"")
+    );
     assert!(CI_GITLAB_TRUSTED.contains("- when: never"));
     assert!(CI_GITLAB_TRUSTED.contains("interruptible: false"));
     assert!(

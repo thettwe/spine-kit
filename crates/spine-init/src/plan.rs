@@ -12,9 +12,9 @@
 //! B7 records the one derived rule that is a *write* decision rather than a
 //! display choice: which paths a provider change deletes.
 
+use spine_canon::ObjectFormat;
 use spine_manifest::region::{self, MarkerStyle};
 use spine_manifest::schema::Owner;
-use spine_canon::ObjectFormat;
 
 /// PB §6.7's five plan tokens.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -179,13 +179,13 @@ pub fn development_build_plan(desired: &[Desired]) -> Plan {
     let mut rows: Vec<PlanRow> = desired
         .iter()
         .map(|d| PlanRow {
-                path: d.path.clone(),
-                owner: d.owner,
-                template: Some(d.template.clone()),
-                head_blob: None,
-                manifest_blob: None,
-                render_blob: None,
-                state: State::Missing,
+            path: d.path.clone(),
+            owner: d.owner,
+            template: Some(d.template.clone()),
+            head_blob: None,
+            manifest_blob: None,
+            render_blob: None,
+            state: State::Missing,
             action: Action::Refuse,
             reason: Some(RefuseReason::NoReleaseManifest),
         })
@@ -432,7 +432,10 @@ fn blob_of(
             let style = MarkerStyle::for_template(name)?;
             let expected = template_versions(name)?;
             let found = region::find(&host, name, expected, style).ok()?;
-            Some(spine_canon::git_blob_id(found.bytes(&host), tree.object_format()))
+            Some(spine_canon::git_blob_id(
+                found.bytes(&host),
+                tree.object_format(),
+            ))
         }
     }
 }

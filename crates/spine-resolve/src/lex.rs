@@ -771,7 +771,11 @@ mod tests {
     fn a_python_comment_yields_one_comment_token_and_no_words() {
         let src = "# import a.b\n";
         assert_eq!(comments(src, Lang::Python), ["# import a.b"]);
-        assert!(!lex(src, Lang::Python).iter().any(|t| t.kind == TokenKind::Word));
+        assert!(
+            !lex(src, Lang::Python)
+                .iter()
+                .any(|t| t.kind == TokenKind::Word)
+        );
     }
 
     /// Case P14: `x = "import a.b"` yields no site — the import bytes are
@@ -868,7 +872,11 @@ mod tests {
     #[test]
     fn a_double_slash_inside_a_ts_regex_does_not_open_a_comment() {
         let src = "const re = /a\\/\\/b/;\nimport { x } from './x';\n";
-        assert!(comments(src, Lang::Ts).is_empty(), "{:?}", comments(src, Lang::Ts));
+        assert!(
+            comments(src, Lang::Ts).is_empty(),
+            "{:?}",
+            comments(src, Lang::Ts)
+        );
         let tokens = lex(src, Lang::Ts);
         assert!(tokens.iter().any(|t| t.is_word(src, "import")));
         assert!(tokens.iter().any(|t| t.simple_literal(src) == Some("./x")));
@@ -900,7 +908,11 @@ mod tests {
         assert_eq!(comments(src, Lang::Dart), ["/* /* */ */"]);
         let tokens = lex(src, Lang::Dart);
         assert!(tokens.iter().any(|t| t.is_word(src, "import")));
-        assert!(tokens.iter().any(|t| t.simple_literal(src) == Some("x.dart")));
+        assert!(
+            tokens
+                .iter()
+                .any(|t| t.simple_literal(src) == Some("x.dart"))
+        );
     }
 
     /// IR §6.1: "A literal containing `$` followed by `{` or an identifier
@@ -943,7 +955,11 @@ mod tests {
     fn a_swift_block_comment_nests() {
         let src = "/* /* */ */ import XCTest\n";
         assert_eq!(comments(src, Lang::Swift), ["/* /* */ */"]);
-        assert!(lex(src, Lang::Swift).iter().any(|t| t.is_word(src, "XCTest")));
+        assert!(
+            lex(src, Lang::Swift)
+                .iter()
+                .any(|t| t.is_word(src, "XCTest"))
+        );
     }
 
     /// Swift's `#if` is punctuation plus a word, never a string opener — the

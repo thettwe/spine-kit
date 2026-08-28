@@ -170,7 +170,9 @@ pub fn find(
     let (_, begin_line_end, version) = begins[0];
     let (end_line_start, _) = ends[0];
     if end_line_start < begin_line_end {
-        return Err(RegionError::MarkersMalformed("an end marker before a begin"));
+        return Err(RegionError::MarkersMalformed(
+            "an end marker before a begin",
+        ));
     }
 
     if version != expected_version {
@@ -279,7 +281,14 @@ mod tests {
     /// the region bytes **with no filters**.
     #[test]
     fn mf_8_1_the_three_published_region_blobs() {
-        struct Case(&'static str, &'static str, u64, MarkerStyle, usize, &'static str);
+        struct Case(
+            &'static str,
+            &'static str,
+            u64,
+            MarkerStyle,
+            usize,
+            &'static str,
+        );
         for Case(host, template, version, style, bytes, blob) in [
             Case(
                 AGENTS,
@@ -329,7 +338,10 @@ mod tests {
             MarkerStyle::for_template("agents-block"),
             Some(MarkerStyle::Html)
         );
-        assert_eq!(MarkerStyle::for_template("gitignore"), Some(MarkerStyle::Hash));
+        assert_eq!(
+            MarkerStyle::for_template("gitignore"),
+            Some(MarkerStyle::Hash)
+        );
         assert_eq!(
             MarkerStyle::for_template("gitattributes"),
             Some(MarkerStyle::Hash)

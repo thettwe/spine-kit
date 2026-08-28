@@ -199,9 +199,9 @@ pub fn apply(spec: &RootSpec) -> io::Result<()> {
                 // after the pivot it is reachable at that same path relative to
                 // the new `/`. Deriving it by `strip_prefix` rather than by
                 // `file_name` keeps a nested `put_old` correct.
-                let relative = put_old.strip_prefix(&new_root).map_err(|_| {
-                    io::Error::other("put_old must live beneath new_root")
-                })?;
+                let relative = put_old
+                    .strip_prefix(&new_root)
+                    .map_err(|_| io::Error::other("put_old must live beneath new_root"))?;
                 let put_old_inside = Path::new("/").join(relative);
                 sys::umount_detach(&put_old_inside)?;
                 let _ = std::fs::remove_dir(&put_old_inside);

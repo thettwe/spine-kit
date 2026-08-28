@@ -160,7 +160,9 @@ impl core::fmt::Debug for Indexer<'_> {
         // A `dyn Verifier` has no `Debug`, and giving the trait one would put a
         // formatting requirement on every implementation for the sake of a
         // derive.
-        f.debug_struct("Indexer").field("repo", &self.repo).finish_non_exhaustive()
+        f.debug_struct("Indexer")
+            .field("repo", &self.repo)
+            .finish_non_exhaustive()
     }
 }
 
@@ -367,11 +369,18 @@ impl<'a> Indexer<'a> {
             }
             // The fingerprint is recomputed at the citing commit rather than
             // carried, so the attr and the citation cannot disagree.
-            let Some(bytes) = self.repo.blob_at(&life.valid_from, ".spine/allowed_signers") else {
+            let Some(bytes) = self
+                .repo
+                .blob_at(&life.valid_from, ".spine/allowed_signers")
+            else {
                 continue;
             };
             let keyring = Keyring::parse(&bytes);
-            let Some(entry) = keyring.entries.iter().find(|e| e.principal == life.principal) else {
+            let Some(entry) = keyring
+                .entries
+                .iter()
+                .find(|e| e.principal == life.principal)
+            else {
                 continue;
             };
             graph.add_node(Node::new(
@@ -589,7 +598,10 @@ impl<'a> Indexer<'a> {
             .is_some_and(|declared| declared == envelope.digest_above_seal());
         let unattested = !(seal_verified && envelope_ok);
 
-        let doc = envelope.fenced.as_ref().and_then(|f| IntentDoc::parse(&f.body));
+        let doc = envelope
+            .fenced
+            .as_ref()
+            .and_then(|f| IntentDoc::parse(&f.body));
         let paths = match seal.get_str("base") {
             Some(base) => self.repo.diff_names(&base, sha)?,
             None => Vec::new(),
@@ -679,7 +691,6 @@ impl<'a> Indexer<'a> {
         }
         Ok(out)
     }
-
 
     // -----------------------------------------------------------------
     // The landing's own elements
@@ -783,8 +794,14 @@ impl<'a> Indexer<'a> {
                 .map(|(_, s)| *s)
                 .unwrap_or("merged");
 
-            let signoff = landing.envelope.trailer("Spine-Signoff").map(|t| Payload::parse(&t.payload));
-            let approve = landing.envelope.trailer("Spine-Approve").map(|t| Payload::parse(&t.payload));
+            let signoff = landing
+                .envelope
+                .trailer("Spine-Signoff")
+                .map(|t| Payload::parse(&t.payload));
+            let approve = landing
+                .envelope
+                .trailer("Spine-Approve")
+                .map(|t| Payload::parse(&t.payload));
             let reopens: Vec<Payload> = landing
                 .envelope
                 .trailers_named("Spine-Reopen")
@@ -838,7 +855,12 @@ impl<'a> Indexer<'a> {
 
             for (n, line) in &doc.acs {
                 let ac = id::ac(repo, &doc.id, *n);
-                graph.add_node(Node::new(NodeKind::Ac, ac.clone(), Attrs::new(), msg(*line)));
+                graph.add_node(Node::new(
+                    NodeKind::Ac,
+                    ac.clone(),
+                    Attrs::new(),
+                    msg(*line),
+                ));
                 graph.add_edge(Edge::new(
                     EdgeKind::HasAc,
                     intent_node.clone(),
@@ -1720,7 +1742,9 @@ impl Payload {
                     let mut value = payload[eq + 1..i].to_vec();
                     // The delimiters are not part of the value; the escapes are
                     // left as written, since nothing here re-emits them.
-                    if value.first() == Some(&b'"') && value.last() == Some(&b'"') && value.len() > 1
+                    if value.first() == Some(&b'"')
+                        && value.last() == Some(&b'"')
+                        && value.len() > 1
                     {
                         value = value[1..value.len() - 1].to_vec();
                     }
@@ -1757,9 +1781,7 @@ impl Payload {
 fn field_after(haystack: &str, key: &str) -> Option<String> {
     let at = haystack.find(key)? + key.len();
     let rest = &haystack[at..];
-    let end = rest
-        .find([' ', '-'])
-        .unwrap_or(rest.len());
+    let end = rest.find([' ', '-']).unwrap_or(rest.len());
     Some(rest[..end].to_string())
 }
 
@@ -1981,10 +2003,16 @@ mod tests {
         // and the landing changeset `cs:<L>` for those that do not".
         for first in ["quick", "reseal"] {
             let payload = format!("{first} class=protected reviewer=bob@example.com");
-            assert!(Payload::parse(payload.as_bytes()).first_field_id().is_none());
+            assert!(
+                Payload::parse(payload.as_bytes())
+                    .first_field_id()
+                    .is_none()
+            );
         }
         assert!(
-            Payload::parse(b"BUG-051 blob=aa signer=a@b").first_field_id().is_some(),
+            Payload::parse(b"BUG-051 blob=aa signer=a@b")
+                .first_field_id()
+                .is_some(),
             "a BUG- id is an id"
         );
     }
@@ -2014,7 +2042,8 @@ mod tests {
         // EV §8.3: "**Verified**, over exactly those fifteen lines joined by
         // fourteen `0x0A`", and the published wrong value is the trailing-LF
         // reading. Two lines here, one separator.
-        let message = "s\n\nSpine-Envelope: 1\nSpine-Event: land\nSpine-Seal: x\nSpine-Seal-Sig: y\n";
+        let message =
+            "s\n\nSpine-Envelope: 1\nSpine-Event: land\nSpine-Seal: x\nSpine-Seal-Sig: y\n";
         let joined = b"Spine-Envelope: 1\nSpine-Event: land";
         assert_eq!(
             Envelope::read(message.as_bytes()).digest_above_seal(),
@@ -2064,13 +2093,19 @@ mod tests {
     #[test]
     fn a_legacy_bare_template_derives_its_variant_from_the_id_and_the_headings() {
         // ID §3.3's `variant_legacy`, all three arms.
-        assert_eq!(canonical_template("intent-bug@2", "BUG-1", b""), "intent-bug@2");
+        assert_eq!(
+            canonical_template("intent-bug@2", "BUG-1", b""),
+            "intent-bug@2"
+        );
         assert_eq!(canonical_template("v2", "BUG-051", b""), "intent-bug@2");
         assert_eq!(
             canonical_template("v2", "INT-042", b"## Invariants\nx\n"),
             "intent-change@2"
         );
-        assert_eq!(canonical_template("v2", "INT-042", b"## Goal\nx\n"), "intent@2");
+        assert_eq!(
+            canonical_template("v2", "INT-042", b"## Goal\nx\n"),
+            "intent@2"
+        );
     }
 
     #[test]
@@ -2078,7 +2113,9 @@ mod tests {
         // CN §3.1: "The header's position is fixed rather than located", which
         // is why `dump.md` §12.2 cites line 2.
         assert_eq!(
-            constitution_version(b"# Constitution \xe2\x80\x94 myrepo\nVersion: v3 \xc2\xb7 Owner: @alice\n"),
+            constitution_version(
+                b"# Constitution \xe2\x80\x94 myrepo\nVersion: v3 \xc2\xb7 Owner: @alice\n"
+            ),
             Some(3)
         );
         assert_eq!(
@@ -2093,7 +2130,8 @@ mod tests {
     fn every_c_a2_pattern_on_one_line_shares_that_lines_number() {
         // CN §9.6, verbatim: "**Every pattern on the line shares the line's
         // number**".
-        let file = b"# Constitution\nVersion: v3\n\nC-A1: mode = team\nC-A2: protected = adr/, infra/\n";
+        let file =
+            b"# Constitution\nVersion: v3\n\nC-A1: mode = team\nC-A2: protected = adr/, infra/\n";
         assert_eq!(
             effective_c_a2(file),
             vec![(b"adr/".to_vec(), 5), (b"infra/".to_vec(), 5)]
@@ -2105,7 +2143,10 @@ mod tests {
 
     #[test]
     fn an_adr_id_is_the_headings_leading_token() {
-        assert_eq!(heading_id(b"# ADR-007: Tax rounding").as_deref(), Some("ADR-007"));
+        assert_eq!(
+            heading_id(b"# ADR-007: Tax rounding").as_deref(),
+            Some("ADR-007")
+        );
         assert_eq!(heading_id(b"ADR-1 rounding").as_deref(), Some("ADR-1"));
         assert_eq!(heading_id(b"# ").as_deref(), None);
     }

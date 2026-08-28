@@ -121,8 +121,14 @@ pub fn unesc(s: &str) -> Result<Vec<u8>, UnescError> {
                         i += 2;
                     }
                     b'x' => {
-                        let hi = bytes.get(i + 2).copied().ok_or(UnescError::BadHex { at: i })?;
-                        let lo = bytes.get(i + 3).copied().ok_or(UnescError::BadHex { at: i })?;
+                        let hi = bytes
+                            .get(i + 2)
+                            .copied()
+                            .ok_or(UnescError::BadHex { at: i })?;
+                        let lo = bytes
+                            .get(i + 3)
+                            .copied()
+                            .ok_or(UnescError::BadHex { at: i })?;
                         let hi = from_hex_lower(hi).ok_or(UnescError::BadHex { at: i })?;
                         let lo = from_hex_lower(lo).ok_or(UnescError::BadHex { at: i })?;
                         out.push((hi << 4) | lo);

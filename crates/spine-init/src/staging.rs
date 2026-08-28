@@ -31,7 +31,10 @@ pub enum StagingError {
     InterruptedByOtherVersion(String),
     /// PB §6.7 step 4: "parse-validated (YAML, JSON) before a single tree file
     /// changes".
-    ParseValidation { path: String, why: String },
+    ParseValidation {
+        path: String,
+        why: String,
+    },
 }
 
 impl core::fmt::Display for StagingError {
@@ -39,7 +42,10 @@ impl core::fmt::Display for StagingError {
         match self {
             StagingError::Io(e) => write!(f, "{e}"),
             StagingError::SecondRun(run) => {
-                write!(f, "a staging run is already pending ({run}); re-run to continue it, or --abort")
+                write!(
+                    f,
+                    "a staging run is already pending ({run}); re-run to continue it, or --abort"
+                )
             }
             StagingError::InterruptedByOtherVersion(v) => {
                 write!(f, "interrupted by {v}: run that version, or --abort")
@@ -147,7 +153,8 @@ impl Staging {
     /// escaping of `/` so a nested path needs no directory tree, and so a
     /// staged name can never escape the staging directory.
     fn staged_path(&self, repo_path: &str) -> PathBuf {
-        self.dir.join(repo_path.replace('/', "%2F").replace('#', "%23"))
+        self.dir
+            .join(repo_path.replace('/', "%2F").replace('#', "%23"))
     }
 
     /// Stage one render. Nothing in the tree moves.
@@ -278,7 +285,10 @@ mod tests {
         let a = new_run_id().unwrap();
         let b = new_run_id().unwrap();
         assert_eq!(a.len(), 32);
-        assert!(a.bytes().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+        assert!(
+            a.bytes()
+                .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase())
+        );
         assert_ne!(a, b, "two runs must not collide");
     }
 
@@ -335,8 +345,16 @@ mod tests {
             Err(StagingError::ParseValidation { .. })
         ));
         // Valid ones stage.
-        assert!(staging.stage(".spine/manifest.json", b"{\"a\":1}\n").is_ok());
-        assert!(staging.stage(".github/workflows/x.yml", b"jobs:\n  build:\n").is_ok());
+        assert!(
+            staging
+                .stage(".spine/manifest.json", b"{\"a\":1}\n")
+                .is_ok()
+        );
+        assert!(
+            staging
+                .stage(".github/workflows/x.yml", b"jobs:\n  build:\n")
+                .is_ok()
+        );
     }
 
     /// A staged name can never escape the staging directory, however the
@@ -360,7 +378,11 @@ mod tests {
         // 1. staging exists and the tree is untouched.
         let untouched = vec![
             (".spine/ci.sh".to_string(), None, "aaa".to_string()),
-            ("AGENTS.md#spine".to_string(), Some("old".into()), "bbb".to_string()),
+            (
+                "AGENTS.md#spine".to_string(),
+                Some("old".into()),
+                "bbb".to_string(),
+            ),
         ];
         assert_eq!(
             classify(Some(&staging), false, &untouched),
@@ -372,8 +394,16 @@ mod tests {
         // 2. some files renamed but the manifest is old — "their blobs equal
         //    the recorded renders, so the re-run recognises its own work".
         let partial = vec![
-            (".spine/ci.sh".to_string(), Some("aaa".into()), "aaa".to_string()),
-            ("AGENTS.md#spine".to_string(), Some("old".into()), "bbb".to_string()),
+            (
+                ".spine/ci.sh".to_string(),
+                Some("aaa".into()),
+                "aaa".to_string(),
+            ),
+            (
+                "AGENTS.md#spine".to_string(),
+                Some("old".into()),
+                "bbb".to_string(),
+            ),
         ];
         assert_eq!(
             classify(Some(&staging), false, &partial),
@@ -384,10 +414,7 @@ mod tests {
         );
 
         // 3. manifest new but uncommitted — staging is already gone.
-        assert_eq!(
-            classify(None, false, &[]),
-            Interrupted::ManifestUncommitted
-        );
+        assert_eq!(classify(None, false, &[]), Interrupted::ManifestUncommitted);
 
         // Nothing pending.
         assert_eq!(classify(None, true, &[]), Interrupted::None);
@@ -399,7 +426,9 @@ mod tests {
     fn the_recorded_manifest_survives_until_staging_is_discarded() {
         let root = scratch("record");
         let staging = Staging::create(&root).unwrap();
-        staging.record_manifest(b"{\"manifest_version\":1}\n").unwrap();
+        staging
+            .record_manifest(b"{\"manifest_version\":1}\n")
+            .unwrap();
         assert_eq!(
             staging.recorded_manifest().as_deref(),
             Some(&b"{\"manifest_version\":1}\n"[..])

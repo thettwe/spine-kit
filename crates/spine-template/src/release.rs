@@ -78,7 +78,12 @@ impl ReleaseManifest {
         };
 
         // Every member required, nothing else permitted.
-        const KNOWN: [&str; 4] = ["actions", "dist_base", "release_manifest_version", "version"];
+        const KNOWN: [&str; 4] = [
+            "actions",
+            "dist_base",
+            "release_manifest_version",
+            "version",
+        ];
         for (name, _) in members {
             if !KNOWN.contains(&name.as_str()) {
                 return Err(refuse(format!("unknown member {name:?}")));
@@ -92,10 +97,15 @@ impl ReleaseManifest {
 
         // "A build that meets a value it does not know refuses rather than
         // guessing which members are present."
-        match value.get("release_manifest_version").and_then(Value::as_u64) {
+        match value
+            .get("release_manifest_version")
+            .and_then(Value::as_u64)
+        {
             Some(1) => {}
             Some(other) => {
-                return Err(refuse(format!("release_manifest_version {other} is unknown")));
+                return Err(refuse(format!(
+                    "release_manifest_version {other} is unknown"
+                )));
             }
             None => return Err(refuse("release_manifest_version is not an integer")),
         }
@@ -190,7 +200,9 @@ fn check_dist_base(s: &str) -> Result<(), NoReleaseManifest> {
         return Err(refuse("dist_base has no host"));
     }
     if s.ends_with('/') {
-        return Err(refuse("dist_base must not end with '/' — ci.sh appends one"));
+        return Err(refuse(
+            "dist_base must not end with '/' — ci.sh appends one",
+        ));
     }
     for (byte, why) in [('@', "userinfo"), ('?', "a query"), ('#', "a fragment")] {
         if rest.contains(byte) {
@@ -251,7 +263,10 @@ mod tests {
 
     #[test]
     fn an_unknown_schema_version_refuses_rather_than_guessing() {
-        let future = FIXTURE.replace("\"release_manifest_version\": 1", "\"release_manifest_version\": 2");
+        let future = FIXTURE.replace(
+            "\"release_manifest_version\": 1",
+            "\"release_manifest_version\": 2",
+        );
         assert!(
             ReleaseManifest::parse(future.as_bytes())
                 .unwrap_err()
@@ -318,7 +333,8 @@ mod tests {
     #[test]
     fn version_takes_mf_3_2s_grammar_including_the_none_exclusion() {
         for bad in ["none", "1.4 0", ""] {
-            let manifest = FIXTURE.replace("\"version\": \"1.4.0\"", &format!("\"version\": \"{bad}\""));
+            let manifest =
+                FIXTURE.replace("\"version\": \"1.4.0\"", &format!("\"version\": \"{bad}\""));
             assert!(
                 ReleaseManifest::parse(manifest.as_bytes()).is_err(),
                 "{bad:?} should be refused"

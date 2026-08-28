@@ -289,7 +289,10 @@ pub fn parse_title(line: &str, path_id: &IntentId) -> Result<Title, Status> {
 /// is the canonical spelling of no `n ≥ 1`); everything else — a wrong prefix,
 /// a sign, a case difference, a non-digit — is `bad-id`.
 fn id_refusal(id_text: &str) -> Status {
-    let digits = match id_text.strip_prefix("INT-").or_else(|| id_text.strip_prefix("BUG-")) {
+    let digits = match id_text
+        .strip_prefix("INT-")
+        .or_else(|| id_text.strip_prefix("BUG-"))
+    {
         Some(d) => d,
         None => return Status::BadId,
     };
@@ -361,7 +364,8 @@ pub fn parse_header(line: &str) -> Result<Header, Status> {
         // "value is any non-empty free-text run and is parsed and discarded".
         check_free_value(status)?;
     }
-    let constitution = parse_constitution(get(FieldName::Constitution).ok_or(Status::BadHeaderField)?)?;
+    let constitution =
+        parse_constitution(get(FieldName::Constitution).ok_or(Status::BadHeaderField)?)?;
 
     Ok(Header {
         owner: owner.to_string(),
@@ -384,7 +388,11 @@ fn check_free_value(value: &str) -> Result<(), Status> {
         && value.len() <= MAX_FIELD_VALUE
         && !value.starts_with([' ', '\t'])
         && !value.ends_with([' ', '\t']);
-    if ok { Ok(()) } else { Err(Status::BadHeaderField) }
+    if ok {
+        Ok(())
+    } else {
+        Err(Status::BadHeaderField)
+    }
 }
 
 /// ID §4.3's `Constitution` value: "`v` + a decimal integer `0 … 999`, no
@@ -404,7 +412,9 @@ fn parse_constitution(value: &str) -> Result<u32, Status> {
 /// is template annotation and is **not** part of the value — a document
 /// carrying it is `bad-supersedes` (§12 D7)."
 pub fn parse_supersedes(line: &str) -> Result<IntentId, Status> {
-    let value = line.strip_prefix("Supersedes: ").ok_or(Status::BadSupersedes)?;
+    let value = line
+        .strip_prefix("Supersedes: ")
+        .ok_or(Status::BadSupersedes)?;
     IntentId::parse(value).ok_or(Status::BadSupersedes)
 }
 
@@ -468,7 +478,10 @@ mod tests {
         assert_eq!(parse_template_value("intent@02"), Err(Status::BadTemplate));
         assert_eq!(parse_template_value("intent@0").unwrap().version, 0);
         assert_eq!(parse_template_value("intent@999").unwrap().version, 999);
-        assert_eq!(parse_template_value("intent@1000"), Err(Status::BadTemplate));
+        assert_eq!(
+            parse_template_value("intent@1000"),
+            Err(Status::BadTemplate)
+        );
     }
 
     /// ID §3.2: the legacy form is "accepted for `n ∈ {1, 2}` only — the two
@@ -483,14 +496,22 @@ mod tests {
         }
         // TM §4.5: "any, bare `v3` or higher → `bad-template`".
         for value in ["v0", "v3", "v4", "v999"] {
-            assert_eq!(parse_template_value(value), Err(Status::BadTemplate), "{value}");
+            assert_eq!(
+                parse_template_value(value),
+                Err(Status::BadTemplate),
+                "{value}"
+            );
         }
     }
 
     #[test]
     fn a_value_that_is_neither_shape_is_bad_template() {
         for value in ["", "2", "intent", "@2", "intent@", "V2", "intent@2@3"] {
-            assert_eq!(parse_template_value(value), Err(Status::BadTemplate), "{value}");
+            assert_eq!(
+                parse_template_value(value),
+                Err(Status::BadTemplate),
+                "{value}"
+            );
         }
     }
 
@@ -510,11 +531,7 @@ mod tests {
 
     #[test]
     fn id_9_1s_title_line_parses_to_its_two_facts() {
-        let t = parse_title(
-            "# INT-042: Invoice totals include tax",
-            &id("INT-042"),
-        )
-        .unwrap();
+        let t = parse_title("# INT-042: Invoice totals include tax", &id("INT-042")).unwrap();
         assert_eq!(t.id.as_str(), "INT-042");
         assert_eq!(t.text, "Invoice totals include tax");
     }
@@ -550,14 +567,22 @@ mod tests {
             ("TASK-042", Status::BadId),
         ] {
             let line = format!("# {spelling}: x");
-            assert_eq!(parse_title(&line, &id("INT-042")), Err(status), "{spelling}");
+            assert_eq!(
+                parse_title(&line, &id("INT-042")),
+                Err(status),
+                "{spelling}"
+            );
         }
     }
 
     #[test]
     fn a_line_that_is_not_a_title_line_at_all_is_bad_id() {
         for line in ["INT-042: x", "## INT-042: x", "# INT-042 x", "#INT-042: x"] {
-            assert_eq!(parse_title(line, &id("INT-042")), Err(Status::BadId), "{line}");
+            assert_eq!(
+                parse_title(line, &id("INT-042")),
+                Err(Status::BadId),
+                "{line}"
+            );
         }
     }
 
@@ -572,7 +597,10 @@ mod tests {
         assert_eq!(h.owner, "@alice");
         assert_eq!(h.template.variant, Some(Variant::Intent));
         assert_eq!(h.template.version, 2);
-        assert_eq!(h.ticket.as_deref(), Some("https://tracker.example.com/T-1187"));
+        assert_eq!(
+            h.ticket.as_deref(),
+            Some("https://tracker.example.com/T-1187")
+        );
         assert_eq!(h.constitution, 3);
     }
 
@@ -581,11 +609,14 @@ mod tests {
     /// neither may be rewritten.
     #[test]
     fn the_owner_value_is_verbatim_in_both_conventions() {
-        let at = parse_header("Owner: @alice \u{00B7} Template: intent@2 \u{00B7} Constitution: v1").unwrap();
-        assert_eq!(at.owner, "@alice");
-        let principal =
-            parse_header("Owner: alice@example.com \u{00B7} Template: intent@2 \u{00B7} Constitution: v1")
+        let at =
+            parse_header("Owner: @alice \u{00B7} Template: intent@2 \u{00B7} Constitution: v1")
                 .unwrap();
+        assert_eq!(at.owner, "@alice");
+        let principal = parse_header(
+            "Owner: alice@example.com \u{00B7} Template: intent@2 \u{00B7} Constitution: v1",
+        )
+        .unwrap();
         assert_eq!(principal.owner, "alice@example.com");
     }
 
@@ -598,7 +629,9 @@ mod tests {
         // TM §6.1: an author adding a ticket "must put it at order 3, between
         // `Template` and `Constitution`, or take `header-field-order`".
         assert_eq!(
-            parse_header("Owner: @a \u{00B7} Template: intent@2 \u{00B7} Constitution: v1 \u{00B7} Ticket: t"),
+            parse_header(
+                "Owner: @a \u{00B7} Template: intent@2 \u{00B7} Constitution: v1 \u{00B7} Ticket: t"
+            ),
             Err(Status::HeaderFieldOrder)
         );
     }
@@ -606,7 +639,9 @@ mod tests {
     #[test]
     fn a_repeated_field_is_duplicate_header_field() {
         assert_eq!(
-            parse_header("Owner: @a \u{00B7} Owner: @b \u{00B7} Template: intent@2 \u{00B7} Constitution: v1"),
+            parse_header(
+                "Owner: @a \u{00B7} Owner: @b \u{00B7} Template: intent@2 \u{00B7} Constitution: v1"
+            ),
             Err(Status::DuplicateHeaderField)
         );
     }
@@ -614,7 +649,9 @@ mod tests {
     #[test]
     fn a_name_outside_the_table_is_unknown_header_field() {
         assert_eq!(
-            parse_header("Owner: @a \u{00B7} Template: intent@2 \u{00B7} Reviewer: @b \u{00B7} Constitution: v1"),
+            parse_header(
+                "Owner: @a \u{00B7} Template: intent@2 \u{00B7} Reviewer: @b \u{00B7} Constitution: v1"
+            ),
             Err(Status::UnknownHeaderField)
         );
     }
@@ -647,7 +684,8 @@ mod tests {
     /// be."
     #[test]
     fn ticket_is_the_only_optional_field() {
-        let h = parse_header("Owner: @a \u{00B7} Template: intent@2 \u{00B7} Constitution: v1").unwrap();
+        let h = parse_header("Owner: @a \u{00B7} Template: intent@2 \u{00B7} Constitution: v1")
+            .unwrap();
         assert_eq!(h.ticket, None);
     }
 
@@ -678,20 +716,28 @@ mod tests {
     #[test]
     fn the_constitution_value_has_one_spelling_per_number() {
         for (value, n) in [("v0", 0u32), ("v3", 3), ("v999", 999)] {
-            let line = format!("Owner: @a \u{00B7} Template: intent@2 \u{00B7} Constitution: {value}");
+            let line =
+                format!("Owner: @a \u{00B7} Template: intent@2 \u{00B7} Constitution: {value}");
             assert_eq!(parse_header(&line).unwrap().constitution, n);
         }
         for value in ["3", "v03", "v1000", "vx", "v"] {
-            let line = format!("Owner: @a \u{00B7} Template: intent@2 \u{00B7} Constitution: {value}");
+            let line =
+                format!("Owner: @a \u{00B7} Template: intent@2 \u{00B7} Constitution: {value}");
             assert_eq!(parse_header(&line), Err(Status::BadHeaderField), "{value}");
         }
     }
 
     #[test]
     fn an_owner_value_over_128_bytes_is_refused() {
-        let ok = format!("Owner: {} \u{00B7} Template: intent@2 \u{00B7} Constitution: v1", "a".repeat(128));
+        let ok = format!(
+            "Owner: {} \u{00B7} Template: intent@2 \u{00B7} Constitution: v1",
+            "a".repeat(128)
+        );
         assert!(parse_header(&ok).is_ok());
-        let over = format!("Owner: {} \u{00B7} Template: intent@2 \u{00B7} Constitution: v1", "a".repeat(129));
+        let over = format!(
+            "Owner: {} \u{00B7} Template: intent@2 \u{00B7} Constitution: v1",
+            "a".repeat(129)
+        );
         assert_eq!(parse_header(&over), Err(Status::BadHeaderField));
     }
 

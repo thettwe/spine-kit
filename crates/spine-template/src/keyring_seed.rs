@@ -1110,7 +1110,8 @@ mod tests {
     /// option list.
     #[test]
     fn strip_seal_edits_the_options_field_and_never_the_principal() {
-        let ordinary = "alice@example.com namespaces=\"spine-signoff@v1,spine-seal@v1\" ssh-ed25519 AAAA";
+        let ordinary =
+            "alice@example.com namespaces=\"spine-signoff@v1,spine-seal@v1\" ssh-ed25519 AAAA";
         assert_eq!(
             strip_seal(ordinary),
             "alice@example.com namespaces=\"spine-signoff@v1\" ssh-ed25519 AAAA"

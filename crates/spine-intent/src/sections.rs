@@ -63,11 +63,31 @@ pub struct SectionSpec {
 
 /// ID §4.8 — variant `intent`, template version 2. Closed, ordered, complete.
 const INTENT: &[SectionSpec] = &[
-    SectionSpec { key: "goal", mandatory: true, body: BodyGrammar::Prose },
-    SectionSpec { key: "non-goals", mandatory: true, body: BodyGrammar::Bullet },
-    SectionSpec { key: "acceptance criteria", mandatory: true, body: BodyGrammar::Ac },
-    SectionSpec { key: "touchpoints", mandatory: true, body: BodyGrammar::Touchpoints },
-    SectionSpec { key: "open questions", mandatory: false, body: BodyGrammar::Free },
+    SectionSpec {
+        key: "goal",
+        mandatory: true,
+        body: BodyGrammar::Prose,
+    },
+    SectionSpec {
+        key: "non-goals",
+        mandatory: true,
+        body: BodyGrammar::Bullet,
+    },
+    SectionSpec {
+        key: "acceptance criteria",
+        mandatory: true,
+        body: BodyGrammar::Ac,
+    },
+    SectionSpec {
+        key: "touchpoints",
+        mandatory: true,
+        body: BodyGrammar::Touchpoints,
+    },
+    SectionSpec {
+        key: "open questions",
+        mandatory: false,
+        body: BodyGrammar::Free,
+    },
 ];
 
 /// TM §4.2 — variant `intent-change`, template version 2. Seven sections, and
@@ -75,13 +95,41 @@ const INTENT: &[SectionSpec] = &[
 /// Change document carrying `## Goal` is `unknown-section`, refused rather than
 /// tolerated."
 const INTENT_CHANGE: &[SectionSpec] = &[
-    SectionSpec { key: "current behavior", mandatory: true, body: BodyGrammar::Prose },
-    SectionSpec { key: "target behavior", mandatory: true, body: BodyGrammar::Prose },
-    SectionSpec { key: "non-goals", mandatory: true, body: BodyGrammar::Bullet },
-    SectionSpec { key: "invariants", mandatory: true, body: BodyGrammar::Bullet },
-    SectionSpec { key: "acceptance criteria", mandatory: true, body: BodyGrammar::Ac },
-    SectionSpec { key: "touchpoints", mandatory: true, body: BodyGrammar::Touchpoints },
-    SectionSpec { key: "open questions", mandatory: false, body: BodyGrammar::Free },
+    SectionSpec {
+        key: "current behavior",
+        mandatory: true,
+        body: BodyGrammar::Prose,
+    },
+    SectionSpec {
+        key: "target behavior",
+        mandatory: true,
+        body: BodyGrammar::Prose,
+    },
+    SectionSpec {
+        key: "non-goals",
+        mandatory: true,
+        body: BodyGrammar::Bullet,
+    },
+    SectionSpec {
+        key: "invariants",
+        mandatory: true,
+        body: BodyGrammar::Bullet,
+    },
+    SectionSpec {
+        key: "acceptance criteria",
+        mandatory: true,
+        body: BodyGrammar::Ac,
+    },
+    SectionSpec {
+        key: "touchpoints",
+        mandatory: true,
+        body: BodyGrammar::Touchpoints,
+    },
+    SectionSpec {
+        key: "open questions",
+        mandatory: false,
+        body: BodyGrammar::Free,
+    },
 ];
 
 /// TM §4.3 — variant `intent-bug`, template version 2. "**The section table is
@@ -127,7 +175,11 @@ pub fn section_key(line: &str) -> Option<String> {
         Some(i) => &trimmed[..i],
         None => trimmed,
     };
-    Some(before_paren.trim_end_matches([' ', '\t']).to_ascii_lowercase())
+    Some(
+        before_paren
+            .trim_end_matches([' ', '\t'])
+            .to_ascii_lowercase(),
+    )
 }
 
 /// ID §3.3's legacy derivation, which runs for a bare `Template: v<n>` value
@@ -254,7 +306,11 @@ pub fn locate<'a>(
     // insertion position, which fixed order gives it.
     let mut highest = 0usize;
     for (line_no, key) in &headings {
-        let ordinal = table.iter().position(|s| s.key == *key).expect("checked above") + 1;
+        let ordinal = table
+            .iter()
+            .position(|s| s.key == *key)
+            .expect("checked above")
+            + 1;
         if ordinal < highest {
             return Err(Refusal::at(Status::SectionOrder, *line_no));
         }
@@ -263,7 +319,10 @@ pub fn locate<'a>(
 
     let mut located = Vec::with_capacity(headings.len());
     for (idx, (line_no, key)) in headings.iter().enumerate() {
-        let ordinal = table.iter().position(|s| s.key == *key).expect("checked above");
+        let ordinal = table
+            .iter()
+            .position(|s| s.key == *key)
+            .expect("checked above");
         let end = headings
             .get(idx + 1)
             .map(|(next, _)| next - 1)
@@ -501,7 +560,9 @@ fn parse_label_line(line: &str, _line_no: usize) -> Result<(Polarity, Vec<Patter
     }
     // The grammar's optional tail begins with exactly one `" "`. A list that
     // starts flush against the colon does not match it.
-    let list = after.strip_prefix(' ').ok_or(Status::UnknownTouchpointLine)?;
+    let list = after
+        .strip_prefix(' ')
+        .ok_or(Status::UnknownTouchpointLine)?;
 
     // "Split the value on `,` (`0x2C`), then strip leading and trailing spaces
     // and tabs from each field. … This split is unambiguous because §6.1
@@ -640,7 +701,10 @@ mod tests {
             variant_legacy(&with_invariants, IntentPrefix::Int),
             Variant::IntentChange
         );
-        assert_eq!(variant_legacy(&["## Goal"], IntentPrefix::Int), Variant::Intent);
+        assert_eq!(
+            variant_legacy(&["## Goal"], IntentPrefix::Int),
+            Variant::Intent
+        );
     }
 
     #[test]
@@ -661,8 +725,14 @@ mod tests {
 
     #[test]
     fn the_four_classes_are_decided_by_leading_bytes_in_order() {
-        assert_eq!(classify("- a non-goal", 1), Ok(LineClass::Bullet("a non-goal")));
-        assert_eq!(classify("AC-1: text", 1).unwrap(), LineClass::Ac(Ac { number: 1, line: 1 }));
+        assert_eq!(
+            classify("- a non-goal", 1),
+            Ok(LineClass::Bullet("a non-goal"))
+        );
+        assert_eq!(
+            classify("AC-1: text", 1).unwrap(),
+            LineClass::Ac(Ac { number: 1, line: 1 })
+        );
         assert_eq!(classify("  wrapped", 1), Ok(LineClass::Continuation));
         assert_eq!(classify("\twrapped", 1), Ok(LineClass::Continuation));
         assert_eq!(classify("plain prose", 1), Ok(LineClass::Prose));
@@ -697,7 +767,11 @@ mod tests {
         ])
         .parse_touchpoints()
         .unwrap();
-        let names = |ps: &[Pattern]| ps.iter().map(|p| p.as_str().to_string()).collect::<Vec<_>>();
+        let names = |ps: &[Pattern]| {
+            ps.iter()
+                .map(|p| p.as_str().to_string())
+                .collect::<Vec<_>>()
+        };
         assert_eq!(names(&t.expected), ["src/billing/", "api/invoices.ts"]);
         assert_eq!(names(&t.forbidden), ["auth/", "shared/schema/"]);
         assert_eq!((t.expected_line, t.forbidden_line), (11, 12));
@@ -707,7 +781,12 @@ mod tests {
     /// parse; `Must NOT chnage` is `unknown-touchpoint-line`."
     #[test]
     fn the_label_is_ascii_case_insensitive_and_the_typo_is_loud() {
-        for spelling in ["Must NOT change", "Must not change", "MUST NOT CHANGE", "must not change"] {
+        for spelling in [
+            "Must NOT change",
+            "Must not change",
+            "MUST NOT CHANGE",
+            "must not change",
+        ] {
             let line = format!("{spelling}:");
             let t = body(&["Expected to change: a"]).parse_touchpoints();
             assert!(t.is_err());
@@ -732,18 +811,28 @@ mod tests {
     #[test]
     fn a_missing_or_repeated_label_line_is_refused() {
         assert_eq!(
-            body(&["Expected to change: a"]).parse_touchpoints().unwrap_err().status,
-            Status::MissingTouchpointLine
-        );
-        assert_eq!(
-            body(&["Must NOT change:"]).parse_touchpoints().unwrap_err().status,
-            Status::MissingTouchpointLine
-        );
-        assert_eq!(
-            body(&["Expected to change: a", "Expected to change: b", "Must NOT change:"])
+            body(&["Expected to change: a"])
                 .parse_touchpoints()
                 .unwrap_err()
                 .status,
+            Status::MissingTouchpointLine
+        );
+        assert_eq!(
+            body(&["Must NOT change:"])
+                .parse_touchpoints()
+                .unwrap_err()
+                .status,
+            Status::MissingTouchpointLine
+        );
+        assert_eq!(
+            body(&[
+                "Expected to change: a",
+                "Expected to change: b",
+                "Must NOT change:"
+            ])
+            .parse_touchpoints()
+            .unwrap_err()
+            .status,
             Status::DuplicateTouchpointLine
         );
     }
@@ -753,7 +842,11 @@ mod tests {
     fn an_empty_field_after_stripping_is_empty_touchpoint() {
         for list in ["a,", ",a", "a,,b", ","] {
             let line = format!("Expected to change: {list}");
-            assert_eq!(parse_label_line(&line, 1), Err(Status::EmptyTouchpoint), "{list}");
+            assert_eq!(
+                parse_label_line(&line, 1),
+                Err(Status::EmptyTouchpoint),
+                "{list}"
+            );
         }
     }
 
@@ -766,7 +859,13 @@ mod tests {
 
     #[test]
     fn every_other_line_class_in_this_body_is_unknown_touchpoint_line() {
-        for line in ["- a bullet", "AC-1: a criterion", "  a continuation", "some prose", "no colon"] {
+        for line in [
+            "- a bullet",
+            "AC-1: a criterion",
+            "  a continuation",
+            "some prose",
+            "no colon",
+        ] {
             assert_eq!(
                 parse_label_line(line, 1),
                 Err(Status::UnknownTouchpointLine),
@@ -797,7 +896,11 @@ mod tests {
 
     #[test]
     fn a_prose_body_needs_one_non_empty_line_and_admits_no_bullet_or_ac() {
-        assert!(goal(&["Invoices show a tax-inclusive total."]).parse_prose().is_ok());
+        assert!(
+            goal(&["Invoices show a tax-inclusive total."])
+                .parse_prose()
+                .is_ok()
+        );
         assert_eq!(
             goal(&[]).parse_prose().unwrap_err(),
             Refusal::at(Status::EmptySection, 4)
@@ -825,7 +928,10 @@ mod tests {
         // DERIVED: the blank line separates, so the continuation after it has no
         // preceding item.
         assert_eq!(
-            goal(&["prose", "", "  wrapped"]).parse_prose().unwrap_err().status,
+            goal(&["prose", "", "  wrapped"])
+                .parse_prose()
+                .unwrap_err()
+                .status,
             Status::StrayContinuation
         );
         assert!(goal(&["prose", "  wrapped"]).parse_prose().is_ok());
@@ -844,7 +950,12 @@ mod tests {
     #[test]
     fn a_bullet_body_counts_items_and_admits_no_prose_or_ac() {
         assert_eq!(bullets(&["- a", "- b", "- c"]).parse_bullets().unwrap(), 3);
-        assert_eq!(bullets(&["- a", "  wrapped", "- b"]).parse_bullets().unwrap(), 2);
+        assert_eq!(
+            bullets(&["- a", "  wrapped", "- b"])
+                .parse_bullets()
+                .unwrap(),
+            2
+        );
         assert_eq!(
             bullets(&["prose"]).parse_bullets().unwrap_err().status,
             Status::StrayText
@@ -868,7 +979,9 @@ mod tests {
 
     #[test]
     fn an_ac_body_collects_numbers_in_document_order() {
-        let acs = criteria(&["AC-1: a", "  wrapped", "AC-2: b"]).parse_acs().unwrap();
+        let acs = criteria(&["AC-1: a", "  wrapped", "AC-2: b"])
+            .parse_acs()
+            .unwrap();
         assert_eq!(acs.iter().map(|a| a.number).collect::<Vec<_>>(), [1, 2]);
         assert_eq!(acs[0].line, 15);
         assert_eq!(acs[1].line, 17);
@@ -939,7 +1052,10 @@ mod tests {
         assert_eq!(located[0].heading_line, 4);
         assert_eq!(located[0].body, ["a", "", "b", "### not a heading"]);
         assert_eq!(located[0].body_first_line, 5);
-        assert_eq!(located[3].body, ["Expected to change: a", "Must NOT change:"]);
+        assert_eq!(
+            located[3].body,
+            ["Expected to change: a", "Must NOT change:"]
+        );
     }
 
     #[test]
@@ -971,7 +1087,12 @@ mod tests {
             Status::MissingSection
         );
 
-        let reordered = ["## Non-goals", "## Goal", "## Acceptance criteria", "## Touchpoints"];
+        let reordered = [
+            "## Non-goals",
+            "## Goal",
+            "## Acceptance criteria",
+            "## Touchpoints",
+        ];
         assert_eq!(
             locate(&reordered, INTENT).unwrap_err().status,
             Status::SectionOrder

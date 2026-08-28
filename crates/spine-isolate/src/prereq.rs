@@ -336,8 +336,7 @@ fn subordinate_range(path: &str, id: u32) -> Option<u32> {
     let login = login_name_for(id);
     text.lines().find_map(|line| {
         let mut fields = line.split(':');
-        let (Some(who), Some(start), Some(count)) =
-            (fields.next(), fields.next(), fields.next())
+        let (Some(who), Some(start), Some(count)) = (fields.next(), fields.next(), fields.next())
         else {
             return None;
         };

@@ -111,8 +111,9 @@ impl Repo {
         repo.run_bytes(&["rev-parse", "--git-dir"])?;
         // Absent in a sha1 repository, which is git's default and the fallback.
         if let Some(value) = repo.config("extensions.objectFormat") {
-            repo.object_format = ObjectFormat::parse(value.trim())
-                .ok_or_else(|| GitError::Unexpected(format!("extensions.objectFormat {value:?}")))?;
+            repo.object_format = ObjectFormat::parse(value.trim()).ok_or_else(|| {
+                GitError::Unexpected(format!("extensions.objectFormat {value:?}"))
+            })?;
         }
         Ok(repo)
     }
@@ -137,7 +138,12 @@ impl Repo {
     /// The full oid `rev` resolves to, or `None`.
     pub fn rev_parse(&self, rev: &str) -> Option<String> {
         let out = self
-            .run_bytes(&["rev-parse", "--verify", "--quiet", &format!("{rev}^{{commit}}")])
+            .run_bytes(&[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("{rev}^{{commit}}"),
+            ])
             .ok()?;
         let oid = String::from_utf8_lossy(&out).trim_end().to_string();
         (!oid.is_empty()).then_some(oid)
@@ -169,7 +175,11 @@ impl Repo {
     pub fn parents(&self, sha: &str) -> Result<Vec<String>> {
         let out = self.run_bytes(&["rev-list", "--parents", "-n", "1", sha])?;
         let line = String::from_utf8_lossy(&out);
-        Ok(line.split_whitespace().skip(1).map(str::to_string).collect())
+        Ok(line
+            .split_whitespace()
+            .skip(1)
+            .map(str::to_string)
+            .collect())
     }
 
     /// The commit message's bytes, exactly as the object carries them.
@@ -199,7 +209,8 @@ impl Repo {
     /// [`Repo::ls_tree`] and then by oid, so a non-UTF-8 path never has to
     /// survive a round trip through `argv`.
     pub fn blob_at(&self, sha: &str, path: &str) -> Option<Vec<u8>> {
-        self.run_bytes(&["cat-file", "blob", &format!("{sha}:{path}")]).ok()
+        self.run_bytes(&["cat-file", "blob", &format!("{sha}:{path}")])
+            .ok()
     }
 
     /// The bytes of a blob by oid.
@@ -225,8 +236,7 @@ impl Repo {
                 .ok_or_else(|| GitError::Unexpected("ls-tree record has no TAB".into()))?;
             let meta = String::from_utf8_lossy(&record[..tab]);
             let mut fields = meta.split_whitespace();
-            let (Some(mode), Some(kind), Some(oid)) =
-                (fields.next(), fields.next(), fields.next())
+            let (Some(mode), Some(kind), Some(oid)) = (fields.next(), fields.next(), fields.next())
             else {
                 return Err(GitError::Unexpected(format!("ls-tree record {meta:?}")));
             };

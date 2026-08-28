@@ -123,7 +123,10 @@ impl core::fmt::Display for UninstallError {
                  fails uninstall-region-remains"
             ),
             UninstallError::UnknownRegionTemplate(p) => {
-                write!(f, "{p}: no marker style is defined for its template (MF §3.7)")
+                write!(
+                    f,
+                    "{p}: no marker style is defined for its template (MF §3.7)"
+                )
             }
             UninstallError::Git(e) => write!(f, "{e}"),
             UninstallError::Io(e) => write!(f, "{e}"),
@@ -266,7 +269,9 @@ fn remove(repo: &Repo, path: &str) -> Result<(), UninstallError> {
 /// always the version's.
 fn begin_prefix(style: MarkerStyle, template: &str) -> String {
     let rendered = style.begin(template, 0);
-    let at = rendered.rfind('@').expect("every begin marker carries @<n>");
+    let at = rendered
+        .rfind('@')
+        .expect("every begin marker carries @<n>");
     rendered[..=at].to_string()
 }
 
@@ -441,9 +446,7 @@ mod tests {
         ]);
         let plan = compute(&tree, &base).unwrap();
         assert!(
-            plan.rows
-                .iter()
-                .all(|r| r.action == UninstallAction::Keep),
+            plan.rows.iter().all(|r| r.action == UninstallAction::Keep),
             "the keyring and the constitution change only through their own PRs"
         );
     }

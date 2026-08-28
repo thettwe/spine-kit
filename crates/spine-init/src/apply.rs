@@ -31,7 +31,10 @@ pub enum ApplyError {
     Io(String),
     /// A region's host file could not be rendered — markers missing, or a
     /// template with no marker style.
-    Region { path: String, why: String },
+    Region {
+        path: String,
+        why: String,
+    },
 }
 
 impl core::fmt::Display for ApplyError {
@@ -118,10 +121,11 @@ pub fn apply(
             Some(_) => {
                 let template = want.template.split('@').next().unwrap_or_default();
                 let version = template_version(template).unwrap_or(0);
-                let style = MarkerStyle::for_template(template).ok_or_else(|| ApplyError::Region {
-                    path: want.path.clone(),
-                    why: format!("{template} has no marker style (MF §3.7)"),
-                })?;
+                let style =
+                    MarkerStyle::for_template(template).ok_or_else(|| ApplyError::Region {
+                        path: want.path.clone(),
+                        why: format!("{template} has no marker style (MF §3.7)"),
+                    })?;
                 let host = fs::read(repo_root.join(file_path)).unwrap_or_default();
                 let body = core::str::from_utf8(&want.content).map_err(|_| ApplyError::Region {
                     path: want.path.clone(),
@@ -190,7 +194,8 @@ pub fn apply(
     for row in &plan.rows {
         if row.action == Action::Delete && row.owner == Owner::SpineOwned {
             let (file_path, _) = spine_manifest::grammar::split_region(&row.path);
-            fs::remove_file(repo_root.join(file_path)).map_err(|e| ApplyError::Io(e.to_string()))?;
+            fs::remove_file(repo_root.join(file_path))
+                .map_err(|e| ApplyError::Io(e.to_string()))?;
         }
     }
 

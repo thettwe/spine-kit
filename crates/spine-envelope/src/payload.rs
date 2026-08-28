@@ -108,7 +108,11 @@ closed_set! {
     GateStatus { Pass => "pass", Override => "override" }
 }
 
-fn token<T>(value: &[u8], what: &str, parse: impl Fn(&[u8]) -> Option<T>) -> Result<T, EnvelopeError> {
+fn token<T>(
+    value: &[u8],
+    what: &str,
+    parse: impl Fn(&[u8]) -> Option<T>,
+) -> Result<T, EnvelopeError> {
     parse(value).ok_or_else(|| {
         EnvelopeError::malformed(format!("{what} is outside its closed set: {}", show(value)))
     })
@@ -386,10 +390,7 @@ impl Approve {
             ("rounds", self.rounds.to_string().into_bytes()),
             ("total_rounds", self.total_rounds.to_string().into_bytes()),
             ("reopens", self.reopens.to_string().into_bytes()),
-            (
-                "red",
-                format!("{}/{}", self.red.0, self.red.1).into_bytes(),
-            ),
+            ("red", format!("{}/{}", self.red.0, self.red.1).into_bytes()),
             ("freeze", self.freeze.clone().into_bytes()),
         ];
         if let Some(r) = &self.run {
@@ -489,7 +490,10 @@ impl Withdraw {
         Ok(Withdraw {
             id: as_str(pos[0], "the intent id")?.to_owned(),
             blob: oid(v[0].unwrap(), "blob")?,
-            orphaned: v[1].map(|x| as_str(x, "orphaned")).transpose()?.map(str::to_owned),
+            orphaned: v[1]
+                .map(|x| as_str(x, "orphaned"))
+                .transpose()?
+                .map(str::to_owned),
             reason: parse_json_string(v[2].unwrap(), "reason")?,
             signer: as_str(v[3].unwrap(), "signer")?.to_owned(),
         })
@@ -656,9 +660,9 @@ pub struct Tool {
 impl Tool {
     pub fn parse(value: &[u8]) -> Result<Self, EnvelopeError> {
         let s = as_str(value, "tool")?;
-        let plus = s
-            .find('+')
-            .ok_or_else(|| EnvelopeError::malformed(format!("tool= is not <version>+<hash>: {s}")))?;
+        let plus = s.find('+').ok_or_else(|| {
+            EnvelopeError::malformed(format!("tool= is not <version>+<hash>: {s}"))
+        })?;
         Ok(Tool {
             version: s[..plus].to_owned(),
             dist_hash: sha256_field(&s.as_bytes()[plus + 1..], "tool's dist_hash")?,
@@ -875,14 +879,19 @@ impl Gates {
         let mut out: Vec<(u32, GateStatus)> = Vec::new();
         for field in split_fields(payload)? {
             let (k, v) = crate::trailer::split_kv(field).ok_or_else(|| {
-                EnvelopeError::malformed(format!("Spine-Gates entry is not G<n>=<status>: {}", show(field)))
+                EnvelopeError::malformed(format!(
+                    "Spine-Gates entry is not G<n>=<status>: {}",
+                    show(field)
+                ))
             })?;
-            let n = as_str(k, "a gate id")?
-                .strip_prefix('G')
-                .ok_or_else(|| EnvelopeError::malformed(format!("gate id has no G: {}", show(k))))?;
+            let n = as_str(k, "a gate id")?.strip_prefix('G').ok_or_else(|| {
+                EnvelopeError::malformed(format!("gate id has no G: {}", show(k)))
+            })?;
             let n: u32 = counter(n.as_bytes(), "a gate number")? as u32;
             if !(1..=16).contains(&n) {
-                return Err(EnvelopeError::malformed(format!("gate G{n} does not exist")));
+                return Err(EnvelopeError::malformed(format!(
+                    "gate G{n} does not exist"
+                )));
             }
             // PB §11: "never G10 (it runs after the seal)". GR §5.6.2: G6 has no
             // entry in a version-1 report, because "iff configured" would make
@@ -928,7 +937,10 @@ mod tests {
     #[test]
     fn vector_a_signoff_round_trips_byte_for_byte() {
         let s = Signoff::parse(VECTOR_A_SIGNOFF).unwrap();
-        assert_eq!(s.template, "intent@2", "the owner's 2026-08-26 decision (b)");
+        assert_eq!(
+            s.template, "intent@2",
+            "the owner's 2026-08-26 decision (b)"
+        );
         assert_eq!(s.reopens, 1);
         assert_eq!(s.render(), VECTOR_A_SIGNOFF.to_vec());
     }
@@ -986,7 +998,10 @@ mod tests {
     #[test]
     fn a_pathless_token_precedes_every_suffixed_one_of_its_gate() {
         // GR §6.1: "its token is a proper prefix of theirs".
-        assert_eq!(render_wires(&["G8:a".to_owned(), "G8".to_owned()]), "G8,G8:a");
+        assert_eq!(
+            render_wires(&["G8:a".to_owned(), "G8".to_owned()]),
+            "G8,G8:a"
+        );
     }
 
     #[test]
@@ -1003,7 +1018,8 @@ mod tests {
                 path: path.to_vec(),
             }
             .render(),
-            br#"0c3a7f18e2b56d94a0c7f3e18b52d6a4907c1e3f "tests/fixtures/caf\303\251.json""#.to_vec()
+            br#"0c3a7f18e2b56d94a0c7f3e18b52d6a4907c1e3f "tests/fixtures/caf\303\251.json""#
+                .to_vec()
         );
     }
 
@@ -1020,10 +1036,15 @@ mod tests {
 
     #[test]
     fn a_test_id_splits_at_the_first_space_and_keeps_the_rest() {
-        let t = Test::parse(b"vitest tests/billing/invoice.test.ts > invoice totals > AC1 includes tax")
-            .unwrap();
+        let t = Test::parse(
+            b"vitest tests/billing/invoice.test.ts > invoice totals > AC1 includes tax",
+        )
+        .unwrap();
         assert_eq!(t.runner, "vitest");
-        assert_eq!(t.id, b"tests/billing/invoice.test.ts > invoice totals > AC1 includes tax".to_vec());
+        assert_eq!(
+            t.id,
+            b"tests/billing/invoice.test.ts > invoice totals > AC1 includes tax".to_vec()
+        );
         assert_eq!(
             t.render().unwrap(),
             b"vitest tests/billing/invoice.test.ts > invoice totals > AC1 includes tax".to_vec()
@@ -1091,7 +1112,10 @@ mod tests {
     fn every_closed_set_refuses_a_value_outside_it() {
         assert!(Event::parse(b"merge").is_none());
         assert!(Lane::parse(b"quiet").is_none());
-        assert!(Strategy::parse(b"rebase").is_none(), "PB §5.5 refuses rebase");
+        assert!(
+            Strategy::parse(b"rebase").is_none(),
+            "PB §5.5 refuses rebase"
+        );
         assert!(Profile::parse(b"n/a").is_some(), "the tombstone's profile");
         assert!(Mode::parse(b"recovery").is_some());
     }

@@ -381,7 +381,10 @@ mod tests {
             ),
         ] {
             assert!(
-                matches!(ArtifactList::parse(&bytes), Err(ArtifactListError::Framing(_))),
+                matches!(
+                    ArtifactList::parse(&bytes),
+                    Err(ArtifactListError::Framing(_))
+                ),
                 "expected a framing refusal for {why}"
             );
         }

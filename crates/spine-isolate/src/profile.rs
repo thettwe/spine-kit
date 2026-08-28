@@ -287,7 +287,10 @@ mod tests {
     /// disposition 1 of §7.1 is a `--ci` rule"*.
     #[test]
     fn a_uid_request_outside_ci_costs_a_solo_developer_no_run() {
-        assert_eq!(step_one(Mode::Solo, Isolation::Uid), Ok(Step6Plan::NoBoundary));
+        assert_eq!(
+            step_one(Mode::Solo, Isolation::Uid),
+            Ok(Step6Plan::NoBoundary)
+        );
     }
 
     /// RF §7.4: *"outside `--ci` the collector attempts no boundary at all"*.
@@ -310,7 +313,10 @@ mod tests {
         assert_eq!(deadline(None), Ok(Duration::from_secs(1800)));
         assert_eq!(deadline(Some(1)), Ok(Duration::from_secs(1)));
         assert_eq!(deadline(Some(0)), Err(Step1Refusal::TimeoutNotPositive(0)));
-        assert_eq!(deadline(Some(-1)), Err(Step1Refusal::TimeoutNotPositive(-1)));
+        assert_eq!(
+            deadline(Some(-1)),
+            Err(Step1Refusal::TimeoutNotPositive(-1))
+        );
     }
 
     /// RF §7.1 *The deadline*: worst case is the deadline *"times the number of
@@ -338,7 +344,9 @@ mod tests {
                 };
                 for outcome in [
                     None,
-                    Some(BoundaryOutcome::PrerequisiteAbsent(Prerequisite::Namespaces)),
+                    Some(BoundaryOutcome::PrerequisiteAbsent(
+                        Prerequisite::Namespaces,
+                    )),
                     Some(BoundaryOutcome::CreationFailed("pivot_root".into())),
                     Some(BoundaryOutcome::Tested(all_four([true; 4]))),
                     Some(BoundaryOutcome::Tested(all_four([true, true, true, false]))),
@@ -409,7 +417,9 @@ mod tests {
         let failed = BoundaryOutcome::Tested(all_four([true, true, true, false]));
 
         let a = absent.diagnostic().expect("an absence is always diagnosed");
-        let f = failed.diagnostic().expect("a failed test is always diagnosed");
+        let f = failed
+            .diagnostic()
+            .expect("a failed test is always diagnosed");
 
         assert!(a.contains("could not build the boundary"), "{a}");
         assert!(a.contains("prerequisite 5"), "{a}");

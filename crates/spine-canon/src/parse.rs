@@ -62,7 +62,10 @@ impl core::fmt::Display for ParseError {
             ParseErrorKind::TrailingBytes => write!(f, "trailing bytes after the top-level value"),
             ParseErrorKind::DuplicateMember(name) => write!(f, "duplicate member name {name:?}"),
             ParseErrorKind::NonIntegerNumber => {
-                write!(f, "not an integer: no sign, leading zero, fraction or exponent is permitted")
+                write!(
+                    f,
+                    "not an integer: no sign, leading zero, fraction or exponent is permitted"
+                )
             }
             ParseErrorKind::IntegerOutOfRange => write!(f, "integer exceeds 2^53 - 1"),
             ParseErrorKind::TooDeep => write!(f, "nesting deeper than {MAX_DEPTH}"),
@@ -129,7 +132,10 @@ impl<'a> Parser<'a> {
     }
 
     fn value(&mut self) -> Result<Value, ParseError> {
-        match self.peek().ok_or_else(|| self.err(ParseErrorKind::UnexpectedEof))? {
+        match self
+            .peek()
+            .ok_or_else(|| self.err(ParseErrorKind::UnexpectedEof))?
+        {
             b'{' => self.object(),
             b'[' => self.array(),
             b'"' => Ok(Value::Str(self.string()?)),
@@ -241,7 +247,7 @@ impl<'a> Parser<'a> {
         let digits = &self.bytes[start..self.pos];
         if digits.is_empty() {
             return Err(self.err(ParseErrorKind::Unexpected(
-                self.peek().unwrap_or(b' ') as char,
+                self.peek().unwrap_or(b' ') as char
             )));
         }
         if matches!(self.peek(), Some(b'.' | b'e' | b'E')) {
@@ -311,9 +317,7 @@ impl<'a> Parser<'a> {
                 }
                 // RFC 8259 §7: control characters must be escaped.
                 0x00..=0x1F => {
-                    return Err(self.err(ParseErrorKind::BadString(
-                        "unescaped control character",
-                    )));
+                    return Err(self.err(ParseErrorKind::BadString("unescaped control character")));
                 }
                 _ => {
                     // The input is known-UTF-8, so step by whole characters.

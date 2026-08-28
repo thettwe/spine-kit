@@ -271,7 +271,10 @@ mod tests {
     #[test]
     fn ir_11_1_every_invocation_is_the_ratified_argv() {
         assert_eq!(Runner::Pytest.invocation(), ["pytest"]);
-        assert_eq!(Runner::Pytest.base_enumeration(), ["pytest", "--collect-only"]);
+        assert_eq!(
+            Runner::Pytest.base_enumeration(),
+            ["pytest", "--collect-only"]
+        );
         assert_eq!(Runner::Pytest.base_outcome_run(), ["pytest"]);
 
         assert_eq!(Runner::Vitest.invocation(), ["vitest", "run"]);
@@ -349,7 +352,11 @@ mod tests {
         // §11.1's cost table and wonders whether the cheap half could be
         // skipped for the expensive runners has it backwards."
         for runner in Runner::ALL {
-            assert_eq!(runner.produces_xfail(), runner.base_invocations() == 2, "{runner}");
+            assert_eq!(
+                runner.produces_xfail(),
+                runner.base_invocations() == 2,
+                "{runner}"
+            );
         }
     }
 
@@ -368,7 +375,10 @@ mod tests {
                 "{token} must be no adapter's own token"
             );
         }
-        assert_eq!(RESERVED_RUNNER_TOKENS, ["gradle", "jest", "junit", "kotest"]);
+        assert_eq!(
+            RESERVED_RUNNER_TOKENS,
+            ["gradle", "jest", "junit", "kotest"]
+        );
     }
 
     /// IR §11.1: `swift-testing` is not reserved, and §11.5 detects it and
@@ -396,10 +406,7 @@ mod tests {
     #[test]
     fn a_test_key_spells_pb_6_2s_node_id() {
         let key = TestKey::new(Runner::Pytest, "tests/test_totals.py::test_tax");
-        assert_eq!(
-            key.node_id(),
-            "test:pytest:tests/test_totals.py::test_tax"
-        );
+        assert_eq!(key.node_id(), "test:pytest:tests/test_totals.py::test_tax");
     }
 
     /// The four tokens are distinct and nothing else resolves.

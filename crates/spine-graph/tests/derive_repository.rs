@@ -214,10 +214,7 @@ impl Fixture {
         let mut keyring = String::new();
         let mut fingerprints = Vec::new();
         for (principal, namespaces) in [
-            (
-                "alice@example.com",
-                "spine-signoff@v1,spine-review@v1",
-            ),
+            ("alice@example.com", "spine-signoff@v1,spine-review@v1"),
             ("bob@example.com", "spine-signoff@v1,spine-review@v1"),
             ("ci@example.com", "spine-seal@v1"),
         ] {
@@ -269,17 +266,35 @@ impl Fixture {
         scratch.write(b"CONSTITUTION.md", CONSTITUTION.as_bytes());
         scratch.write(b"adr/ADR-007-tax-rounding.md", ADR.as_bytes());
         run(&repo, "git", &["add", "-A"], None);
-        run(&repo, "git", &["commit", "--quiet", "-m", "spine: init"], None);
+        run(
+            &repo,
+            "git",
+            &["commit", "--quiet", "-m", "spine: init"],
+            None,
+        );
         let t0 = git_out(&repo, &["rev-parse", "HEAD"]);
 
         // --- the branch: five members, M1…M5 ------------------------------
-        run(&repo, "git", &["checkout", "--quiet", "-b", "intent/INT-042"], None);
+        run(
+            &repo,
+            "git",
+            &["checkout", "--quiet", "-b", "intent/INT-042"],
+            None,
+        );
         let sign = |line: &str, keyfile: &str, namespace: &str| -> String {
             let key = keydir.join(keyfile);
             let armored = run(
                 &keydir,
                 "ssh-keygen",
-                &["-Y", "sign", "-q", "-f", key.to_str().unwrap(), "-n", namespace],
+                &[
+                    "-Y",
+                    "sign",
+                    "-q",
+                    "-f",
+                    key.to_str().unwrap(),
+                    "-n",
+                    namespace,
+                ],
                 Some(line.as_bytes()),
             );
             // PB §11 carries the SSHSIG "armor stripped to one line".
@@ -317,15 +332,17 @@ impl Fixture {
             b"import pytest\n\n\n# @verifies INT-042/AC-1\ndef test_AC1_totals_include_tax():\n    assert True\n\n\n# @verifies INT-042/AC-2\ndef test_AC2_zero_rated():\n    assert True\n",
         );
         run(&repo, "git", &["add", "-A"], None);
-        run(&repo, "git", &["commit", "--quiet", "-m", "INT-042: tests"], None);
+        run(
+            &repo,
+            "git",
+            &["commit", "--quiet", "-m", "INT-042: tests"],
+            None,
+        );
 
         // M3 — the approval commit, carrying the frozen manifest. PB §11
         // confines `Spine-Frozen`/`Spine-Test` to the approval commit under
         // merge strategy, and PB §6.2 derives `freezes` from there.
-        let test_blob = git_out(
-            &repo,
-            &["rev-parse", "HEAD:tests/billing/test_invoice.py"],
-        );
+        let test_blob = git_out(&repo, &["rev-parse", "HEAD:tests/billing/test_invoice.py"]);
         let frozen = format!(
             "Spine-Frozen: {test_blob} tests/billing/test_invoice.py\nSpine-Test: pytest {TEST_AC1}\nSpine-Test: pytest {TEST_AC2}"
         );
@@ -351,7 +368,12 @@ impl Fixture {
         scratch.write(b"src/billing/tax.py", b"def tax(x):\n    return x * 0.2\n");
         run(&repo, "git", &["add", "src/billing/tax.py"], None);
         let has_non_utf8 = non_utf8 && stage_raw_path(&repo, &cafe_py(), b"# caf\xc3\xa9\n");
-        run(&repo, "git", &["commit", "--quiet", "-m", "INT-042: implement"], None);
+        run(
+            &repo,
+            "git",
+            &["commit", "--quiet", "-m", "INT-042: implement"],
+            None,
+        );
 
         // M5 — the review event commit (empty). `Hc` is M5.
         let hc = {
@@ -359,7 +381,10 @@ impl Fixture {
             // this very commit becomes — so the line is written after it and
             // the commit that carries it is not the one it names. The envelope
             // is what the indexer reads, so the branch copy is elided here.
-            commit_empty(&repo, "INT-042: review\n\nSpine-Event: review\nSpine-Intent: INT-042\n");
+            commit_empty(
+                &repo,
+                "INT-042: review\n\nSpine-Event: review\nSpine-Intent: INT-042\n",
+            );
             git_out(&repo, &["rev-parse", "HEAD"])
         };
         let tree = git_out(&repo, &["rev-parse", "HEAD^{tree}"]);
@@ -438,7 +463,12 @@ impl Fixture {
         // repository whose HEAD is an intent branch has no `refs/heads/main`
         // and derives nothing. `symbolic-ref` moves it without writing the
         // working tree, which the non-UTF-8 path could not survive.
-        run(&repo, "git", &["symbolic-ref", "HEAD", "refs/heads/main"], None);
+        run(
+            &repo,
+            "git",
+            &["symbolic-ref", "HEAD", "refs/heads/main"],
+            None,
+        );
 
         let mut members = git_out(&repo, &["rev-list", &format!("{t0}..{l}")])
             .lines()
@@ -595,7 +625,10 @@ fn the_landing_changeset_carries_the_seals_fields_and_its_members_carry_only_lan
     // signer".
     assert_eq!(attr(landing, "seal_verified"), "true");
     assert_eq!(attr(landing, "unattested"), "false");
-    assert_eq!(landing.src.render(), format!("git:{}:trailer:Spine-Seal", fixture.l));
+    assert_eq!(
+        landing.src.render(),
+        format!("git:{}:trailer:Spine-Seal", fixture.l)
+    );
 
     assert_eq!(fixture.members.len(), 5, "M(L) is five member commits");
     for member in &fixture.members {
@@ -675,11 +708,7 @@ fn the_intent_its_acs_and_its_touchpoints_come_from_the_fenced_bytes_never_the_s
 
     // ID §6.6: "the line number … is the touchpoint **label line's**, not the
     // individual pattern's, since several patterns share one line."
-    let expected_label = format!(
-        "git:{}:msg:L{}",
-        fixture.l,
-        fixture.fenced_first_line + 15
-    );
+    let expected_label = format!("git:{}:msg:L{}", fixture.l, fixture.fenced_first_line + 15);
     for path in [b"src/billing/".as_slice(), b"api/invoices.ts".as_slice()] {
         let declares = edge(
             &graph,
@@ -810,11 +839,7 @@ fn the_signers_are_the_keyring_at_the_trust_root_with_real_fingerprints() {
         assert!(n.attrs.get("valid_to").is_none());
         assert_eq!(
             n.src.render(),
-            format!(
-                "git:{}:.spine/allowed_signers:{}",
-                fixture.t0,
-                line_no + 1
-            )
+            format!("git:{}:.spine/allowed_signers:{}", fixture.t0, line_no + 1)
         );
     }
     // `roles` is "ascending by bytes", which the keyring parser fixes and the
@@ -827,7 +852,10 @@ fn the_signers_are_the_keyring_at_the_trust_root_with_real_fingerprints() {
         "spine-review@v1,spine-signoff@v1"
     );
     assert_eq!(
-        attr(node(&graph, &id::signer("myrepo", b"ci@example.com")), "roles"),
+        attr(
+            node(&graph, &id::signer("myrepo", b"ci@example.com")),
+            "roles"
+        ),
         "spine-seal@v1"
     );
     // The seal's signer is attested to by the landing.
@@ -882,7 +910,10 @@ fn modifies_is_the_integrated_delta_plus_the_per_member_diffs_and_carries_raw_pa
 
     // The landing's own `git diff --name-only B L` — three paths, one of them
     // not valid UTF-8 (DM §12.1).
-    assert!(fixture.has_non_utf8, "this platform can stage the tree entry");
+    assert!(
+        fixture.has_non_utf8,
+        "this platform can stage the tree entry"
+    );
     for path in [
         cafe_py(),
         b"src/billing/tax.py".to_vec(),
@@ -907,7 +938,11 @@ fn modifies_is_the_integrated_delta_plus_the_per_member_diffs_and_carries_raw_pa
         .filter(|e| e.kind == EdgeKind::Modifies && e.from != cs)
         .map(|e| e.to.as_str())
         .collect();
-    assert_eq!(member_modifies.len(), 3, "one test file and two source files");
+    assert_eq!(
+        member_modifies.len(),
+        3,
+        "one test file and two source files"
+    );
 }
 
 #[test]
@@ -943,7 +978,10 @@ fn freezes_reads_the_approval_commit_under_merge_and_cites_it_there() {
         attr_of(frozen, "oid"),
         git_out(
             &fixture.scratch.repo(),
-            &["rev-parse", &format!("{}:tests/billing/test_invoice.py", fixture.l)]
+            &[
+                "rev-parse",
+                &format!("{}:tests/billing/test_invoice.py", fixture.l)
+            ]
         )
     );
     for test in [TEST_AC1, TEST_AC2] {
@@ -962,8 +1000,12 @@ fn the_derived_graph_serializes_and_two_derivations_of_one_tip_are_byte_identica
         return;
     };
     let repo = fixture.repo();
-    let first = Indexer::new(&repo, &OpenSsh).index(&Options::default()).unwrap();
-    let second = Indexer::new(&repo, &OpenSsh).index(&Options::default()).unwrap();
+    let first = Indexer::new(&repo, &OpenSsh)
+        .index(&Options::default())
+        .unwrap();
+    let second = Indexer::new(&repo, &OpenSsh)
+        .index(&Options::default())
+        .unwrap();
     let a = serialize(&first.header, &first.graph).unwrap();
     let b = serialize(&second.header, &second.graph).unwrap();
 
@@ -971,11 +1013,15 @@ fn the_derived_graph_serializes_and_two_derivations_of_one_tip_are_byte_identica
     // the same objects by the same release produce identical bytes."
     assert_eq!(a.bytes(), b.bytes());
     assert_eq!(a.digest(), b.digest());
-    assert_eq!(*a.bytes().last().unwrap(), 0x0A, "the final line is terminated");
+    assert_eq!(
+        *a.bytes().last().unwrap(),
+        0x0A,
+        "the final line is terminated"
+    );
 
     // The header is line 1 and records the four inputs DM §4.1 closes over.
-    let header = String::from_utf8_lossy(a.bytes().split(|&c| c == b'\n').next().unwrap())
-        .into_owned();
+    let header =
+        String::from_utf8_lossy(a.bytes().split(|&c| c == b'\n').next().unwrap()).into_owned();
     assert!(header.contains(&format!(r#""head":"{}""#, fixture.l)));
     assert!(header.contains(&format!(r#""trust_root":"{}""#, fixture.t0)));
     assert!(header.contains(r#""repo":"myrepo""#));
@@ -995,7 +1041,11 @@ fn the_derived_graph_serializes_and_two_derivations_of_one_tip_are_byte_identica
         NodeKind::Signer,
         NodeKind::Test,
     ] {
-        assert!(kinds.contains(&kind), "no {} node was derived", kind.token());
+        assert!(
+            kinds.contains(&kind),
+            "no {} node was derived",
+            kind.token()
+        );
     }
 }
 
@@ -1006,17 +1056,23 @@ fn a_worktree_edit_and_an_untracked_file_change_no_byte_of_the_dump() {
     };
     let repo = fixture.repo();
     let before = {
-        let indexed = Indexer::new(&repo, &OpenSsh).index(&Options::default()).unwrap();
+        let indexed = Indexer::new(&repo, &OpenSsh)
+            .index(&Options::default())
+            .unwrap();
         serialize(&indexed.header, &indexed.graph).unwrap()
     };
 
     // DM §8.7: "Running `--dump` in a bare repository, with a dirty working
     // tree, with a stale index, or with untracked files present produces
     // identical bytes."
-    fixture.scratch.write(b"CONSTITUTION.md", b"# vandalised\nVersion: v9\n");
+    fixture
+        .scratch
+        .write(b"CONSTITUTION.md", b"# vandalised\nVersion: v9\n");
     fixture.scratch.write(b"untracked.txt", b"noise\n");
     let after = {
-        let indexed = Indexer::new(&repo, &OpenSsh).index(&Options::default()).unwrap();
+        let indexed = Indexer::new(&repo, &OpenSsh)
+            .index(&Options::default())
+            .unwrap();
         serialize(&indexed.header, &indexed.graph).unwrap()
     };
     assert_eq!(before.bytes(), after.bytes());
@@ -1031,7 +1087,12 @@ fn a_repository_with_no_manifest_anywhere_is_not_installed_rather_than_empty() {
     std::fs::create_dir_all(scratch.repo()).unwrap();
     let dir = scratch.repo();
     run(&dir, "git", &["init", "--quiet", "-b", "main", "."], None);
-    run(&dir, "git", &["config", "user.email", "t@example.invalid"], None);
+    run(
+        &dir,
+        "git",
+        &["config", "user.email", "t@example.invalid"],
+        None,
+    );
     run(&dir, "git", &["config", "user.name", "Test"], None);
     std::fs::write(dir.join("README.md"), b"hi\n").unwrap();
     run(&dir, "git", &["add", "-A"], None);

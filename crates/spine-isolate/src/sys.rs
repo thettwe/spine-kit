@@ -18,9 +18,9 @@
 
 #![cfg(unix)]
 
-use core::ffi::{c_int, c_uint};
 #[cfg(target_os = "linux")]
 use core::ffi::{c_char, c_long, c_ulong, c_void};
+use core::ffi::{c_int, c_uint};
 
 unsafe extern "C" {
     fn getuid() -> c_uint;
@@ -195,10 +195,7 @@ pub fn umount_detach(target: &std::path::Path) -> std::io::Result<()> {
 /// `pivot_root(2)` — the last step of M1's mount sequence (RF §7.1: *"the child
 /// is `pivot_root`ed into the result"*).
 #[cfg(target_os = "linux")]
-pub fn pivot_root(
-    new_root: &std::path::Path,
-    put_old: &std::path::Path,
-) -> std::io::Result<()> {
+pub fn pivot_root(new_root: &std::path::Path, put_old: &std::path::Path) -> std::io::Result<()> {
     let new_root = cstr(new_root)?;
     let put_old = cstr(put_old)?;
     // SAFETY: both pointers are to `CString`s that outlive the call; the
@@ -262,14 +259,7 @@ impl NetlinkSocket {
     /// Send one request and read the whole dump, up to `NLMSG_DONE`.
     pub fn dump(&self, request: &[u8]) -> std::io::Result<Vec<u8>> {
         // SAFETY: `request` is a live slice for the duration of the call.
-        let sent = unsafe {
-            send(
-                self.fd,
-                request.as_ptr().cast::<c_void>(),
-                request.len(),
-                0,
-            )
-        };
+        let sent = unsafe { send(self.fd, request.as_ptr().cast::<c_void>(), request.len(), 0) };
         if sent < 0 {
             return Err(std::io::Error::last_os_error());
         }
@@ -279,14 +269,7 @@ impl NetlinkSocket {
         loop {
             // SAFETY: `buf` is a live, uniquely-borrowed allocation of the
             // length passed.
-            let got = unsafe {
-                recv(
-                    self.fd,
-                    buf.as_mut_ptr().cast::<c_void>(),
-                    buf.len(),
-                    0,
-                )
-            };
+            let got = unsafe { recv(self.fd, buf.as_mut_ptr().cast::<c_void>(), buf.len(), 0) };
             if got < 0 {
                 return Err(std::io::Error::last_os_error());
             }

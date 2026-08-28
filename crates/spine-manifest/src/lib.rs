@@ -18,8 +18,8 @@ pub mod region;
 pub mod schema;
 pub mod status;
 
-pub use builder::{Builder, FileEntry};
 pub use artifacts::{ArtifactList, host_target, target_for};
+pub use builder::{Builder, FileEntry};
 pub use keyring::{Keyring, Lint, Mode};
 pub use region::{MarkerStyle, Region, RegionError};
 pub use schema::{FileRecord, Isolation, Manifest, Owner};

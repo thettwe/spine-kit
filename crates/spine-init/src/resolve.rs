@@ -98,7 +98,10 @@ pub enum ResolveError {
     /// MF §6.6: "A `base` naming an unreachable blob costs `--merge`, not a
     /// landing." The pristine render is gone from the object store, so there is
     /// no three-way to run.
-    BaseUnreachable { path: String, blob: String },
+    BaseUnreachable {
+        path: String,
+        blob: String,
+    },
     /// A managed region, whose recorded `blob` names bytes git never stored.
     ///
     /// **A gap in the corpus, and the one this crate found.** PB §6.7 argues
@@ -116,7 +119,10 @@ pub enum ResolveError {
     /// MF §6.6 already licenses the outcome — "A `base` naming an unreachable
     /// blob costs `--merge`, not a landing" — so this refuses and names the two
     /// exits that remain rather than inventing a base.
-    RegionHasNoReachableBase { path: String, blob: String },
+    RegionHasNoReachableBase {
+        path: String,
+        blob: String,
+    },
     /// `--adopt` on a path no record claims. There is no pristine render the
     /// human diverged from, so `base` cannot be written and the class change
     /// would be a lie; `--force` is the exit for a foreign path.
@@ -173,7 +179,10 @@ impl core::fmt::Display for ResolveError {
                 write!(f, "{p}: named by both --adopt and --force")
             }
             ResolveError::NotRefused(p) => {
-                write!(f, "{p}: the plan did not refuse it, so there is nothing to resolve")
+                write!(
+                    f,
+                    "{p}: the plan did not refuse it, so there is nothing to resolve"
+                )
             }
             ResolveError::Git(e) => write!(f, "{e}"),
             ResolveError::Io(e) => write!(f, "{e}"),
@@ -230,7 +239,8 @@ pub fn resolve(
         }
         let markers_removed = matches!(
             row.reason,
-            Some(RefuseReason::MarkersRemoved) | Some(RefuseReason::Region(RegionError::MarkersRemoved))
+            Some(RefuseReason::MarkersRemoved)
+                | Some(RefuseReason::Region(RegionError::MarkersRemoved))
         );
         let diverged = matches!(row.reason, Some(RefuseReason::SpineOwnedDiverged));
 

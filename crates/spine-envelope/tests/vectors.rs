@@ -82,11 +82,20 @@ fn vector_c_pins_byte_order_and_not_numeric_order() {
     // EV §10: "`AC10` precedes `AC2`. An implementation that sorts ids
     // 'naturally' produces a different digest over identical facts."
     let sorted = lines(C_SORTED);
-    let ten = sorted.iter().position(|l| l.ends_with(b"AC10 rounding")).unwrap();
-    let two = sorted.iter().position(|l| l.ends_with(b"AC2 zero-rated")).unwrap();
+    let ten = sorted
+        .iter()
+        .position(|l| l.ends_with(b"AC10 rounding"))
+        .unwrap();
+    let two = sorted
+        .iter()
+        .position(|l| l.ends_with(b"AC2 zero-rated"))
+        .unwrap();
     assert!(ten < two);
     // And runner-major within Spine-Test: pytest before vitest, for every id.
-    let pytest = sorted.iter().position(|l| l.starts_with(b"Spine-Test: pytest")).unwrap();
+    let pytest = sorted
+        .iter()
+        .position(|l| l.starts_with(b"Spine-Test: pytest"))
+        .unwrap();
     assert!(pytest < ten);
 }
 
@@ -147,7 +156,10 @@ fn the_frozen_manifest_is_ordered_by_blob_id_and_not_by_path() {
     let mut sorted_paths = paths.clone();
     sorted_paths.sort_unstable();
     assert_ne!(paths, sorted_paths, "EV §8.2 point 1: not the path order");
-    assert_eq!(frozen[0].path, "tests/fixtures/café.json".as_bytes().to_vec());
+    assert_eq!(
+        frozen[0].path,
+        "tests/fixtures/café.json".as_bytes().to_vec()
+    );
     assert_eq!(frozen[4].path, b"tests/setup.ts".to_vec());
 }
 
@@ -232,7 +244,11 @@ fn vector_a_message_is_forty_three_lines_and_4031_bytes() {
     assert_eq!(A_MESSAGE.len(), 4031, "EV §8.5");
     assert_eq!(lines(A_MESSAGE).len(), 43);
     assert_eq!(*A_MESSAGE.last().unwrap(), b'\n');
-    assert_ne!(A_MESSAGE[A_MESSAGE.len() - 2], b'\n', "no trailing blank line");
+    assert_ne!(
+        A_MESSAGE[A_MESSAGE.len() - 2],
+        b'\n',
+        "no trailing blank line"
+    );
 }
 
 #[test]
@@ -242,7 +258,10 @@ fn vector_a_fence_reproduces_its_blob_and_its_byte_count() {
     assert_eq!(fence.bytes, 765, "EV §2.6: bytes, not characters");
     assert_eq!(fence.body.len(), 765);
     assert_eq!(
-        String::from_utf8(fence.body.clone()).unwrap().chars().count(),
+        String::from_utf8(fence.body.clone())
+            .unwrap()
+            .chars()
+            .count(),
         762,
         "the three-character difference is three U+00B7, two bytes each"
     );
@@ -270,7 +289,11 @@ fn vector_a_is_a_gated_landing_whose_subject_is_derived_from_the_fence() {
 fn vector_a_capped_quantity_is_4031_of_16384() {
     let env = Envelope::parse(A_MESSAGE).unwrap();
     assert_eq!(env.capped_quantity(), 4031);
-    assert_eq!(env.capped_quantity(), A_MESSAGE.len(), "no manifest to exclude");
+    assert_eq!(
+        env.capped_quantity(),
+        A_MESSAGE.len(),
+        "no manifest to exclude"
+    );
     env.check_cap().unwrap();
 }
 
@@ -282,7 +305,10 @@ fn vector_a_seals_two_different_reports_and_two_different_trees() {
     let seal = Seal::parse(env.first(TrailerName::Seal).unwrap()).unwrap();
     let review = Review::parse(env.first(TrailerName::Review).unwrap()).unwrap();
     assert_ne!(seal.report, review.report);
-    assert_ne!(seal.tree, review.tree, "L's tree is T minus the intent file");
+    assert_ne!(
+        seal.tree, review.tree,
+        "L's tree is T minus the intent file"
+    );
     assert_eq!(seal.head, review.head, "both name the content head Hc");
 }
 
@@ -323,13 +349,21 @@ fn vector_b_lists_eleven_gates_and_takes_a_protected_review() {
     // quick landing has neither; G6 and G10 never appear.
     let gates = env.gates().unwrap();
     assert_eq!(gates.0.len(), 11);
-    assert!(gates.0.iter().all(|&(n, _)| ![3, 4, 6, 10, 12].contains(&n)));
+    assert!(
+        gates
+            .0
+            .iter()
+            .all(|&(n, _)| ![3, 4, 6, 10, 12].contains(&n))
+    );
 
     let review = Review::parse(env.first(TrailerName::Review).unwrap()).unwrap();
     // EV §9 point 4: the signerless overlay "is evaluated after aggregation and
     // only ever raises", so the class is protected although the only wire is a
     // tripwire-class G11 advisory.
-    assert_eq!(review.class, spine_envelope::payload::ReviewClass::Protected);
+    assert_eq!(
+        review.class,
+        spine_envelope::payload::ReviewClass::Protected
+    );
     assert_eq!(review.wires, vec!["G11"]);
     // Point 1: the first field is `quick`, and `intent=` is absent.
     assert_eq!(review.subject, "quick");
@@ -398,7 +432,10 @@ fn vector_d_freeze_recomputes_from_the_envelope_alone() {
 #[test]
 fn vector_d_keeps_spine_approval_and_moves_only_the_strategy() {
     let env = Envelope::parse(D_MESSAGE).unwrap();
-    assert_eq!(env.strategy().unwrap(), spine_envelope::payload::Strategy::Squash);
+    assert_eq!(
+        env.strategy().unwrap(),
+        spine_envelope::payload::Strategy::Squash
+    );
     // EV §11 point 4 / §13.6: present under both strategies.
     assert!(env.first(TrailerName::Approval).is_some());
     env.check_subject().unwrap();
@@ -415,9 +452,18 @@ fn the_squash_manifest_is_emitted_in_freeze_order_between_approval_and_review() 
     // and before `Spine-Review`, in the same `freeze=` sort order".
     let env = Envelope::parse(D_MESSAGE).unwrap();
     let names: Vec<TrailerName> = env.trailers().iter().map(|(n, _)| *n).collect();
-    let approval = names.iter().position(|n| *n == TrailerName::Approval).unwrap();
-    let review = names.iter().position(|n| *n == TrailerName::Review).unwrap();
-    let first_frozen = names.iter().position(|n| *n == TrailerName::Frozen).unwrap();
+    let approval = names
+        .iter()
+        .position(|n| *n == TrailerName::Approval)
+        .unwrap();
+    let review = names
+        .iter()
+        .position(|n| *n == TrailerName::Review)
+        .unwrap();
+    let first_frozen = names
+        .iter()
+        .position(|n| *n == TrailerName::Frozen)
+        .unwrap();
     let last_test = names.iter().rposition(|n| *n == TrailerName::Test).unwrap();
     assert!(approval < first_frozen && last_test < review);
 }

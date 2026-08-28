@@ -443,7 +443,10 @@ impl Envelope {
                     }
                 }
             }
-            let slot = TrailerName::ALL.iter().position(|n| n == name).expect("closed set");
+            let slot = TrailerName::ALL
+                .iter()
+                .position(|n| n == name)
+                .expect("closed set");
             counts[slot] += 1;
             if !name.is_repeatable() && counts[slot] > 1 {
                 return Err(EnvelopeError::malformed(format!(
@@ -488,7 +491,11 @@ impl Envelope {
         if wants_fence != self.fence.is_some() {
             return Err(EnvelopeError::malformed(format!(
                 "a {shape:?} landing {} a fenced intent",
-                if wants_fence { "needs" } else { "must not carry" }
+                if wants_fence {
+                    "needs"
+                } else {
+                    "must not carry"
+                }
             )));
         }
         Ok(())
@@ -749,7 +756,12 @@ mod tests {
     #[test]
     fn a_quick_subject_is_checked_only_for_its_prefix() {
         let good = String::from_utf8(quick()).unwrap();
-        assert!(Envelope::parse(good.as_bytes()).unwrap().check_subject().is_ok());
+        assert!(
+            Envelope::parse(good.as_bytes())
+                .unwrap()
+                .check_subject()
+                .is_ok()
+        );
 
         let bad = good.replace("quick: bump a dep", "chore: update deps");
         let e = Envelope::parse(bad.as_bytes()).unwrap();
@@ -760,7 +772,12 @@ mod tests {
         );
 
         let empty = good.replace("quick: bump a dep", "quick: ");
-        assert!(Envelope::parse(empty.as_bytes()).unwrap().check_subject().is_err());
+        assert!(
+            Envelope::parse(empty.as_bytes())
+                .unwrap()
+                .check_subject()
+                .is_err()
+        );
     }
 
     #[test]

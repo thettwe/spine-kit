@@ -144,9 +144,15 @@ fn compound_suite<'a>(source: &str, clause: &'a [Token]) -> Option<&'a [Token]> 
 
     let mut depth = 0i32;
     for (i, token) in clause.iter().enumerate() {
-        if token.is_punct(source, b'(') || token.is_punct(source, b'[') || token.is_punct(source, b'{') {
+        if token.is_punct(source, b'(')
+            || token.is_punct(source, b'[')
+            || token.is_punct(source, b'{')
+        {
             depth += 1;
-        } else if token.is_punct(source, b')') || token.is_punct(source, b']') || token.is_punct(source, b'}') {
+        } else if token.is_punct(source, b')')
+            || token.is_punct(source, b']')
+            || token.is_punct(source, b'}')
+        {
             depth -= 1;
         } else if depth == 0 && token.is_punct(source, b':') {
             let suite = &clause[i + 1..];
@@ -666,7 +672,10 @@ mod tests {
             ("p/q/helper.py", ""),
         ]);
         let expected = Disposition::Repo(vec!["p/q/__init__.py".into(), "p/q/helper.py".into()]);
-        assert_eq!(only("from . import helper\n", "p/q/mod.py", &tree), expected);
+        assert_eq!(
+            only("from . import helper\n", "p/q/mod.py", &tree),
+            expected
+        );
         assert_eq!(
             only("from . import helper\n", "p/q/__init__.py", &tree),
             expected
@@ -864,13 +873,19 @@ mod tests {
     #[test]
     fn the_python_roots_read_no_file() {
         let tree = MapTree::new([
-            ("pyproject.toml", "[tool.setuptools]\npackage-dir = {\"\" = \"lib\"}\n"),
+            (
+                "pyproject.toml",
+                "[tool.setuptools]\npackage-dir = {\"\" = \"lib\"}\n",
+            ),
             ("lib/pkg/mod.py", ""),
             ("t.py", ""),
         ]);
         // `lib/` is not a root, however `pyproject.toml` spells it.
         assert_eq!(roots(&tree), [""]);
-        assert_eq!(only("import pkg.mod\n", "t.py", &tree), Disposition::External);
+        assert_eq!(
+            only("import pkg.mod\n", "t.py", &tree),
+            Disposition::External
+        );
     }
 
     /// IR §3.7 names `try: import … except ImportError:` as a conditional
@@ -930,7 +945,11 @@ mod tests {
     #[test]
     fn a_multi_line_compound_statement_is_unchanged() {
         let tree = MapTree::new([("oracle.py", ""), ("a.py", "")]);
-        let found = sites("try:\n    import oracle\nexcept ImportError:\n    pass\n", "a.py", &tree);
+        let found = sites(
+            "try:\n    import oracle\nexcept ImportError:\n    pass\n",
+            "a.py",
+            &tree,
+        );
         assert_eq!(found.len(), 1);
     }
 }

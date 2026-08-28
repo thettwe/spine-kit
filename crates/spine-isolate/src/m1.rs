@@ -91,7 +91,10 @@ pub enum ResultDirectoryArrangement {
     /// mounts in a mount namespace the child does not share. Arrangement (a) is
     /// the one M1 reaches for; (b) is kept because §3 admits it and P1 measures
     /// *"whichever path the collector is actually using"*.
-    OutsideTheMountedRoot { staging: PathBuf, publish_to: PathBuf },
+    OutsideTheMountedRoot {
+        staging: PathBuf,
+        publish_to: PathBuf,
+    },
 }
 
 /// The inputs to M1's mount sequence.
@@ -222,7 +225,11 @@ impl fmt::Display for OverlayError {
                 p.display()
             ),
             OverlayError::PathNotUtf8(p) => {
-                write!(f, "{} is not UTF-8 and cannot be a mount option", p.display())
+                write!(
+                    f,
+                    "{} is not UTF-8 and cannot be a mount option",
+                    p.display()
+                )
             }
         }
     }
@@ -494,7 +501,9 @@ pub enum Phase {
     /// M1 will use for a runner invocation, differing only in that its writable
     /// tree is an empty directory of the collector's own making"*.
     Probe,
-    Restore { checkout: Checkout },
+    Restore {
+        checkout: Checkout,
+    },
     Invocation {
         checkout: Checkout,
         runner: String,
@@ -539,7 +548,12 @@ impl Phase {
 /// - Order *within* a checkout is free: *"Invocation order and concurrency are
 ///   an implementation choice and cannot affect the file's bytes (§4.5)."*
 pub fn schedule(runners: &[RunnerPlan]) -> Vec<Phase> {
-    let mut phases = vec![Phase::Probe, Phase::Restore { checkout: Checkout::Base }];
+    let mut phases = vec![
+        Phase::Probe,
+        Phase::Restore {
+            checkout: Checkout::Base,
+        },
+    ];
     for plan in runners {
         phases.push(Phase::Invocation {
             checkout: Checkout::Base,
@@ -554,7 +568,9 @@ pub fn schedule(runners: &[RunnerPlan]) -> Vec<Phase> {
             });
         }
     }
-    phases.push(Phase::Restore { checkout: Checkout::Tree });
+    phases.push(Phase::Restore {
+        checkout: Checkout::Tree,
+    });
     for plan in runners {
         phases.push(Phase::Invocation {
             checkout: Checkout::Tree,
@@ -577,8 +593,8 @@ pub fn invocation_count(runners: &[RunnerPlan]) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::clone;
+    use super::*;
 
     fn two_runners() -> Vec<RunnerPlan> {
         vec![
@@ -837,7 +853,10 @@ mod tests {
             assert!(line.contains(RESTORE_SCRIPT_ADDRESS), "{line}");
             assert!(!line.contains("prerequisite"), "{line}");
         }
-        assert_eq!(RestoreScript::Present(b"true\n".to_vec()).diagnostic(Checkout::Base), None);
+        assert_eq!(
+            RestoreScript::Present(b"true\n".to_vec()).diagnostic(Checkout::Base),
+            None
+        );
 
         let outcome = run_restore(&absent, Path::new("."), Duration::from_secs(1));
         assert_eq!(outcome, RestoreOutcome::Empty);
@@ -892,7 +911,8 @@ mod tests {
         let seen = std::fs::read_to_string(dir.join("cwd.txt")).unwrap();
         // macOS resolves /var to /private/var, so compare the tails.
         assert!(
-            seen.trim().ends_with(dir.file_name().unwrap().to_str().unwrap()),
+            seen.trim()
+                .ends_with(dir.file_name().unwrap().to_str().unwrap()),
             "{seen}"
         );
         let _ = std::fs::remove_dir_all(&dir);

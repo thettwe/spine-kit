@@ -175,10 +175,7 @@ mod tests {
         // pair 0xD800 0xDC00. UTF-8 byte order puts U+10000 second (0xF0.. >
         // 0xEF..); UTF-16 code-unit order puts it first. RFC 8785 §3.2.3 says
         // UTF-16, so this is the ordering the digest depends on.
-        let value = Value::obj([
-            ("\u{10000}", Value::Int(1)),
-            ("\u{FFFD}", Value::Int(2)),
-        ]);
+        let value = Value::obj([("\u{10000}", Value::Int(1)), ("\u{FFFD}", Value::Int(2))]);
         let canonical = canonicalize_to_string(&value);
         assert!(
             canonical.starts_with("{\"\u{10000}\""),
@@ -189,10 +186,7 @@ mod tests {
     #[test]
     fn empty_containers_and_zero() {
         assert_eq!(canonicalize_to_string(&Value::arr([])), "[]");
-        assert_eq!(
-            canonicalize_to_string(&Value::Obj(Vec::new())),
-            "{}"
-        );
+        assert_eq!(canonicalize_to_string(&Value::Obj(Vec::new())), "{}");
         assert_eq!(canonicalize_to_string(&Value::Int(0)), "0");
     }
 

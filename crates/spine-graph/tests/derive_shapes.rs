@@ -8,10 +8,10 @@
 //! the tests assert what does *not* depend on a signature.
 
 use spine_graph::derive::{Indexer, Options};
+use spine_graph::git;
 use spine_graph::schema::{AttrValue, EdgeKind, NodeKind, id};
 use spine_graph::store::Graph;
 use spine_graph::verify::Unverified;
-use spine_graph::git;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -23,7 +23,8 @@ const MANIFEST: &str = r#"{"cli":{"dist_hash":"sha256:6f49644fdd3009155fe32ab46b
 /// signature; the entries are here so `signer` nodes exist at all.
 const KEYRING: &str = "alice@example.com namespaces=\"spine-signoff@v1,spine-review@v1\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMb068SxqsLNkSdlCVXeIPOcHOPCh/TemT4tv9iJnqla\nbob@example.com namespaces=\"spine-signoff@v1,spine-review@v1\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINZJBgqcpDmx19xO9D29xeFtCCUMyfe/ti+lY7c+rvim\nci@example.com namespaces=\"spine-seal@v1\" ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICE3UkO6VDz+9ag4xQScwsfdP8PHJhLh+QWkIwzUjWze\n";
 
-const CONSTITUTION: &str = "# Constitution — myrepo\nVersion: v3 · Owner: @alice\n\nC-A2: protected = infra/\n";
+const CONSTITUTION: &str =
+    "# Constitution — myrepo\nVersion: v3 · Owner: @alice\n\nC-A2: protected = infra/\n";
 
 /// A minimal intent document (ID §4) for the id given.
 fn intent_doc(id: &str, title: &str) -> String {
@@ -232,7 +233,10 @@ fn a_supersession_emits_both_directions_and_flips_the_earlier_intents_status() {
     };
     let tree = trunk.stage("src/a.py", Some("a\n"));
     let base = trunk.tip.clone();
-    trunk.land(&gated_envelope("INT-042", "First", &base, &tree, &[]), &tree);
+    trunk.land(
+        &gated_envelope("INT-042", "First", &base, &tree, &[]),
+        &tree,
+    );
 
     let tree2 = trunk.stage("src/b.py", Some("b\n"));
     let base2 = trunk.tip.clone();
@@ -253,14 +257,16 @@ fn a_supersession_emits_both_directions_and_flips_the_earlier_intents_status() {
     // PB §6.6: "the indexer emits `superseded_by`, so archaeology queries
     // return the current truth first and the history behind it."
     assert!(
-        graph.edges().iter().any(|e| e.kind == EdgeKind::Supersedes
-            && e.from == second
-            && e.to == first)
+        graph
+            .edges()
+            .iter()
+            .any(|e| e.kind == EdgeKind::Supersedes && e.from == second && e.to == first)
     );
     assert!(
-        graph.edges().iter().any(|e| e.kind == EdgeKind::SupersededBy
-            && e.from == first
-            && e.to == second)
+        graph
+            .edges()
+            .iter()
+            .any(|e| e.kind == EdgeKind::SupersededBy && e.from == first && e.to == second)
     );
     assert_eq!(attr(node(&graph, &first), "status"), "superseded");
     assert_eq!(attr(node(&graph, &second), "status"), "merged");
@@ -273,7 +279,10 @@ fn a_revert_is_detected_by_patch_id_and_is_never_declared() {
     };
     let tree = trunk.stage("src/a.py", Some("added by INT-042\n"));
     let base = trunk.tip.clone();
-    let l = trunk.land(&gated_envelope("INT-042", "Adds a", &base, &tree, &[]), &tree);
+    let l = trunk.land(
+        &gated_envelope("INT-042", "Adds a", &base, &tree, &[]),
+        &tree,
+    );
 
     // The reverting landing removes exactly what `L` added. Nothing in its
     // envelope says so: PB §6.6's "A revert is detected, never declared."
@@ -389,7 +398,10 @@ fn an_orphan_on_trunk_is_no_changeset_at_all() {
     // `constitution` nodes from trees, not from landings — except that the
     // constitution's citation is a *landing's*, so a trunk with none has no
     // constitution node either (CN §9.6).
-    assert!(!graph.nodes().is_empty(), "the keyring still yields signers");
+    assert!(
+        !graph.nodes().is_empty(),
+        "the keyring still yields signers"
+    );
 }
 
 #[test]
@@ -453,7 +465,10 @@ fn a_landing_below_the_trust_root_is_not_walked() {
 
     let tree2 = trunk.stage("src/new.py", Some("new\n"));
     let base2 = trunk.tip.clone();
-    let above = trunk.land(&gated_envelope("INT-002", "New", &base2, &tree2, &[]), &tree2);
+    let above = trunk.land(
+        &gated_envelope("INT-002", "New", &base2, &tree2, &[]),
+        &tree2,
+    );
 
     // Move the pin to the second landing: the walk keeps the trust root and
     // everything above it, so the first landing falls out.

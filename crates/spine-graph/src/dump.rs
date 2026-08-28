@@ -199,8 +199,7 @@ pub fn serialize(header: &Header, graph: &Graph) -> Result<Dump> {
 
     // Every node id the dump emitted, so an edge endpoint can be checked
     // against the kind it actually names where the node is present.
-    let node_kinds: Vec<(&str, NodeKind)> =
-        nodes.iter().map(|n| (n.id.as_str(), n.kind)).collect();
+    let node_kinds: Vec<(&str, NodeKind)> = nodes.iter().map(|n| (n.id.as_str(), n.kind)).collect();
 
     for edge in graph.ordered_edges() {
         // **Endpoints are validated.** They were not, until 2026-08-28: an edge
@@ -215,10 +214,8 @@ pub fn serialize(header: &Header, graph: &Graph) -> Result<Dump> {
         // and refusing it here would make the dump unable to represent the
         // thing a gate exists to report.
         if let Some((from_kind, to_kind)) = edge.kind.endpoints() {
-            for (role, id, expected) in [
-                ("from", &edge.from, from_kind),
-                ("to", &edge.to, to_kind),
-            ] {
+            for (role, id, expected) in [("from", &edge.from, from_kind), ("to", &edge.to, to_kind)]
+            {
                 let observed = node_kinds
                     .iter()
                     .find(|(node_id, _)| *node_id == id.as_str())
@@ -400,7 +397,10 @@ fn check_node_attr_domains(
     // which is guarded on the value being present and `false`.
     for name in kind.always_present_attrs() {
         if attrs.get(name).is_none() {
-            return bad(format!("{name} is always present on a {} node", kind.token()));
+            return bad(format!(
+                "{name} is always present on a {} node",
+                kind.token()
+            ));
         }
     }
 

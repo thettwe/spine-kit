@@ -250,7 +250,9 @@ impl Canary {
     /// A canary the probe **deleted** is also changed. `read` failing is
     /// therefore a failure and never a skipped limb.
     pub fn reread_unchanged(&self) -> bool {
-        std::fs::read(&self.path).map(|got| got == self.bytes).unwrap_or(false)
+        std::fs::read(&self.path)
+            .map(|got| got == self.bytes)
+            .unwrap_or(false)
     }
 
     /// Probe step 4: *"removes the canary. **No probe artifact survives step
@@ -361,7 +363,10 @@ pub fn decide_p1(canary: &Canary, attempts: &P1Attempts) -> TestOutcome {
             "(c) create the result file at its absolute path",
             attempts.create_result_file,
         ),
-        ("(d) remove the result directory", attempts.remove_result_dir),
+        (
+            "(d) remove the result directory",
+            attempts.remove_result_dir,
+        ),
     ];
     for (name, attempt) in limbs {
         if attempt == Attempt::Succeeded {
@@ -558,9 +563,8 @@ pub fn decide_p3(host: &HostView, report: &P3Report) -> TestOutcome {
         // DERIVED: the corpus fixes the two limbs (RF §7.1 P3) and says nothing
         // about an enumeration that failed. Treating an empty table as a pass
         // is the way to pass P3 without measuring anything.
-        outcome.fail(
-            "the probe's process table does not contain the probe — nothing was enumerated",
-        );
+        outcome
+            .fail("the probe's process table does not contain the probe — nothing was enumerated");
     }
     if report.pids.contains(&host.pid) {
         outcome.fail(format!(
@@ -686,9 +690,7 @@ pub fn decide_p4(report: &P4Report) -> TestOutcome {
 
     match report.connect {
         ConnectOutcome::Failed => {}
-        ConnectOutcome::Completed => {
-            outcome.fail("P4(b) the connect to 192.0.2.1:443 completed")
-        }
+        ConnectOutcome::Completed => outcome.fail("P4(b) the connect to 192.0.2.1:443 completed"),
         ConnectOutcome::PendingAtBound => outcome.fail(
             "P4(b) the connect to 192.0.2.1:443 was still pending at one second — \
              pending means a route existed",
@@ -734,7 +736,10 @@ mod tests {
             u: 1001,
             ug: 1001,
             pid: 4242,
-            root: DevIno { dev: 79, ino: 34252584 },
+            root: DevIno {
+                dev: 79,
+                ino: 34252584,
+            },
         }
     }
 
@@ -869,7 +874,10 @@ mod tests {
             effective_gid: 100000,
         };
         // The forgery: perfect ids, and a file the host sees owned by `U`.
-        let forged = Some(Ownership { uid: host.u, gid: host.ug });
+        let forged = Some(Ownership {
+            uid: host.u,
+            gid: host.ug,
+        });
         assert!(!decide_p2(&host, &honest_looking, forged).passed());
 
         // And the same with 0, which is the other half of the host limb.
@@ -994,7 +1002,11 @@ mod tests {
         let Enumeration::Read(links) = &report.links else {
             unreachable!()
         };
-        assert_eq!(links.len(), 10, "a device count of one was never the property");
+        assert_eq!(
+            links.len(),
+            10,
+            "a device count of one was never the property"
+        );
     }
 
     /// *"a veth pair moved in, a bridge, an inherited interface"* — the threat
@@ -1080,7 +1092,10 @@ mod tests {
 
         let mut report = measured_namespace();
         report.links = Enumeration::Read(vec![]);
-        assert!(!decide_p4(&report).passed(), "a live namespace always holds lo");
+        assert!(
+            !decide_p4(&report).passed(),
+            "a live namespace always holds lo"
+        );
     }
 
     /// RF §7.1: the target and the bound are fixed, and the target is

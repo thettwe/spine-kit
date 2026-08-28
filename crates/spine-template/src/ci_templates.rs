@@ -53,8 +53,12 @@ use spine_manifest::schema::Owner;
 pub const CI_TEMPLATE_VERSION: u64 = 4;
 
 /// The four CI keys of MF §3.6's twelve, in the order that section prints them.
-pub const CI_TEMPLATE_NAMES: [&str; 4] =
-    ["ci-generic", "ci-github-collect", "ci-github-land", "ci-gitlab"];
+pub const CI_TEMPLATE_NAMES: [&str; 4] = [
+    "ci-generic",
+    "ci-github-collect",
+    "ci-github-land",
+    "ci-gitlab",
+];
 
 /// `ci-generic@4` — CI §5.3's `.spine/ci.sh`, the collector's entry point.
 ///
@@ -161,10 +165,12 @@ impl CiFile {
 
     /// Render this row, then scan it (CI §3.4 steps 3 and 5, in that order).
     pub fn render(&self, table: &Table) -> Result<String, PlanRefusal> {
-        table.render_checked(self.body).map_err(|error| PlanRefusal {
-            path: self.path,
-            error,
-        })
+        table
+            .render_checked(self.body)
+            .map_err(|error| PlanRefusal {
+                path: self.path,
+                error,
+            })
     }
 }
 
@@ -368,7 +374,10 @@ mod tests {
     fn no_provider_renders_a_restore_script() {
         for provider in [Provider::Github, Provider::Gitlab, Provider::Generic] {
             assert!(
-                provider.files().iter().all(|f| f.path != ".spine/restore.sh"),
+                provider
+                    .files()
+                    .iter()
+                    .all(|f| f.path != ".spine/restore.sh"),
                 "{} must render no restore script",
                 provider.as_str()
             );
@@ -419,7 +428,10 @@ mod tests {
     /// not a defect — CI §3.4 step 2 builds one table for all four templates.
     #[test]
     fn each_github_workflow_carries_exactly_the_pins_it_uses() {
-        assert_eq!(CI_GITHUB_COLLECT.matches(substitute::PIN_CHECKOUT).count(), 1);
+        assert_eq!(
+            CI_GITHUB_COLLECT.matches(substitute::PIN_CHECKOUT).count(),
+            1
+        );
         assert_eq!(
             CI_GITHUB_COLLECT
                 .matches(substitute::PIN_UPLOAD_ARTIFACT)
@@ -436,7 +448,9 @@ mod tests {
 
         assert_eq!(CI_GITHUB_LAND.matches(substitute::PIN_CHECKOUT).count(), 1);
         assert_eq!(
-            CI_GITHUB_LAND.matches(substitute::PIN_UPLOAD_ARTIFACT).count(),
+            CI_GITHUB_LAND
+                .matches(substitute::PIN_UPLOAD_ARTIFACT)
+                .count(),
             1,
             "T9 keeps the gate report as an artifact of its own run"
         );
@@ -527,9 +541,11 @@ mod tests {
         // only file carrying all three pins and the trunk name.
         let land = GITHUB_FILES[2].render(&table).unwrap();
         assert!(land.contains("uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"));
-        assert!(land.contains(
-            "uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16"
-        ));
+        assert!(
+            land.contains(
+                "uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16"
+            )
+        );
         assert!(land.contains("SPINE_TRUNK: \"trunk\""));
         assert!(land.contains("ref: \"trunk\""));
     }
@@ -653,7 +669,12 @@ mod tests {
     fn the_four_template_names_are_provider_independent() {
         assert_eq!(
             CI_TEMPLATE_NAMES,
-            ["ci-generic", "ci-github-collect", "ci-github-land", "ci-gitlab"]
+            [
+                "ci-generic",
+                "ci-github-collect",
+                "ci-github-land",
+                "ci-gitlab"
+            ]
         );
         // Nothing a provider renders can add a name outside the four, but the
         // four exist whatever the provider is.

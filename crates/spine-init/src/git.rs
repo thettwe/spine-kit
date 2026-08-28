@@ -249,7 +249,14 @@ impl Repo {
     pub fn first_parent_commit_touching(&self, from: &str, path: &str) -> Result<Option<String>> {
         let out = run(
             &self.root,
-            &["rev-list", "--first-parent", "--max-count=1", from, "--", path],
+            &[
+                "rev-list",
+                "--first-parent",
+                "--max-count=1",
+                from,
+                "--",
+                path,
+            ],
         )?;
         Ok(out.split_whitespace().next().map(str::to_string))
     }
@@ -481,7 +488,10 @@ mod tests {
         scratch.write("f.txt", "committed\n");
         scratch.commit("seed");
         let repo = Repo::discover(&scratch.0).unwrap();
-        assert_eq!(repo.read_head("f.txt").as_deref(), Some(&b"committed\n"[..]));
+        assert_eq!(
+            repo.read_head("f.txt").as_deref(),
+            Some(&b"committed\n"[..])
+        );
 
         scratch.write("f.txt", "edited but not committed\n");
         assert_eq!(

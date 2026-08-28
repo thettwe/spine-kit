@@ -129,7 +129,18 @@ pub fn is_declaration(path: &str) -> bool {
 /// still `mixed-objc-target`, because Objective-C's interop surface is C's: a
 /// `.c` behind a `.h` is the same invisible oracle."
 pub const C_FAMILY_EXTENSIONS: [&str; 12] = [
-    ".m", ".mm", ".h", ".hh", ".hpp", ".hxx", ".pch", ".c", ".cc", ".cpp", ".cxx", ".modulemap",
+    ".m",
+    ".mm",
+    ".h",
+    ".hh",
+    ".hpp",
+    ".hxx",
+    ".pch",
+    ".c",
+    ".cc",
+    ".cpp",
+    ".cxx",
+    ".modulemap",
 ];
 
 /// IR §7.3 test 1, "matched byte-exactly and lowercase only, exactly as §3.1's
@@ -493,12 +504,18 @@ mod tests {
     /// counter, so a wrong spelling is a wrong signature.
     #[test]
     fn every_refusal_token_is_spelled_as_the_spec_fixes_it() {
-        assert_eq!(LangUnclassifiable::MixedObjcTarget.to_string(), "mixed-objc-target");
+        assert_eq!(
+            LangUnclassifiable::MixedObjcTarget.to_string(),
+            "mixed-objc-target"
+        );
         assert_eq!(
             LangUnclassifiable::RcChangedOnBranch.to_string(),
             "rc-changed-on-branch"
         );
-        assert_eq!(LangUnclassifiable::NoPackageManifest.to_string(), "no-package-manifest");
+        assert_eq!(
+            LangUnclassifiable::NoPackageManifest.to_string(),
+            "no-package-manifest"
+        );
         assert_eq!(Unresolvable::DynamicImport.to_string(), "dynamic-import");
         assert_eq!(Unresolvable::AliasDeadEnd.to_string(), "alias-dead-end");
         assert_eq!(FileNotUtf8.to_string(), "file-not-utf8");

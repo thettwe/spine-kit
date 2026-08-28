@@ -76,7 +76,10 @@ pub enum RestoreRefusal {
     /// Note *its `U` blob* — the blob in the tree at the upgrade landing, not
     /// the record's. A human edit after the upgrade is exactly the difference
     /// between those two trees.
-    ModifiedSinceUpgrade { at_u: Option<String>, at_b: Option<String> },
+    ModifiedSinceUpgrade {
+        at_u: Option<String>,
+        at_b: Option<String>,
+    },
 }
 
 impl core::fmt::Display for RestoreRefusal {
@@ -139,7 +142,10 @@ pub enum RollbackError {
     /// MF §6.7 step 1: "and holds a well-formed manifest"
     /// (`restore-ancestor-manifest-malformed`).
     AncestorManifestMissing(String),
-    AncestorManifestMalformed { sha: String, why: String },
+    AncestorManifestMalformed {
+        sha: String,
+        why: String,
+    },
     /// A path named by `--force` that the plan did not refuse.
     NotRefused(String),
     Git(GitError),
@@ -158,7 +164,10 @@ impl core::fmt::Display for RollbackError {
                  backing out the first init is --uninstall"
             ),
             RollbackError::AncestorUnreachable(sha) => {
-                write!(f, "restore-ancestor-unreachable: {sha} is not a first-parent ancestor")
+                write!(
+                    f,
+                    "restore-ancestor-unreachable: {sha} is not a first-parent ancestor"
+                )
             }
             RollbackError::AncestorManifestMissing(sha) => write!(
                 f,
@@ -168,7 +177,10 @@ impl core::fmt::Display for RollbackError {
                 write!(f, "restore-ancestor-manifest-malformed: at {sha}: {why}")
             }
             RollbackError::NotRefused(p) => {
-                write!(f, "{p}: the rollback did not refuse it, so --force overrides nothing")
+                write!(
+                    f,
+                    "{p}: the rollback did not refuse it, so --force overrides nothing"
+                )
             }
             RollbackError::Git(e) => write!(f, "{e}"),
             RollbackError::Io(e) => write!(f, "{e}"),
@@ -301,7 +313,8 @@ pub fn compute(
 
         // PB §6.7: "A path whose HEAD blob ≠ its `U` blob was modified after the
         // upgrade and is refused unless `--force`."
-        let modified_since = at_base.as_ref().map(|s| &s.oid) != at_upgrade.as_ref().map(|s| &s.oid);
+        let modified_since =
+            at_base.as_ref().map(|s| &s.oid) != at_upgrade.as_ref().map(|s| &s.oid);
         let refusal = if modified_since && !forced.contains(&path) {
             Some(RestoreRefusal::ModifiedSinceUpgrade {
                 at_u: at_upgrade.as_ref().map(|s| s.oid.clone()),
@@ -497,11 +510,7 @@ pub fn rollback_manifest(
 /// `git checkout <sha> -- <path>` is PB §6.7's own verb, and it is used rather
 /// than a byte write because it restores the **mode** alongside the blob, which
 /// MF §6.7 step 5 compares.
-pub fn execute(
-    repo: &Repo,
-    target: &Target,
-    plan: &RollbackPlan,
-) -> Result<(), RollbackError> {
+pub fn execute(repo: &Repo, target: &Target, plan: &RollbackPlan) -> Result<(), RollbackError> {
     for row in &plan.rows {
         let (file_path, _) = spine_manifest::grammar::split_region(&row.path);
         match &row.action {

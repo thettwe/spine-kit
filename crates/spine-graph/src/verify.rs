@@ -171,10 +171,8 @@ static COUNTER: AtomicU64 = AtomicU64::new(0);
 impl Scratch {
     fn new() -> Option<Self> {
         let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!(
-            "spine-graph-verify-{}-{n}",
-            std::process::id()
-        ));
+        let dir =
+            std::env::temp_dir().join(format!("spine-graph-verify-{}-{n}", std::process::id()));
         std::fs::create_dir_all(&dir).ok()?;
         Some(Scratch(dir))
     }
@@ -225,7 +223,11 @@ mod tests {
                 .namespace_that_verifies(b"", "alice@example.com", b"line", "sig")
                 .is_none()
         );
-        assert!(OpenSsh.namespace_that_verifies(b"k", "", b"line", "sig").is_none());
+        assert!(
+            OpenSsh
+                .namespace_that_verifies(b"k", "", b"line", "sig")
+                .is_none()
+        );
         assert!(
             OpenSsh
                 .namespace_that_verifies(b"k", "alice@example.com", b"line", "")

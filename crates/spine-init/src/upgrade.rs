@@ -78,7 +78,10 @@ pub enum UpgradeError {
     MissingKey(&'static str),
     UnknownKey(String),
     /// "order as PB §11 prints it" (MF §6.4).
-    FieldOutOfOrder { found: String, expected: &'static str },
+    FieldOutOfOrder {
+        found: String,
+        expected: &'static str,
+    },
     VersionOutOfGrammar(String),
     /// "A leading, trailing or doubled comma is malformed" (MF §6.4).
     ForcedListMalformed,
@@ -253,7 +256,8 @@ impl UpgradeLine {
             }
         }
 
-        let value = |name: &'static str| got.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone());
+        let value =
+            |name: &'static str| got.iter().find(|(k, _)| k == name).map(|(_, v)| v.clone());
         let required = |name: &'static str| value(name).ok_or(UpgradeError::MissingKey(name));
 
         let manifest_field = required("manifest")?;
@@ -278,7 +282,11 @@ fn check_oid(s: &str) -> Result<String, UpgradeError> {
     // Never abbreviated, always lowercase hex (MF §3.5). The length is left to
     // the caller's `object_format`, because a `Spine-Upgrade` line carries commit
     // shas as well as blob ids and only the repository knows which width it uses.
-    if s.is_empty() || !s.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()) {
+    if s.is_empty()
+        || !s
+            .bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+    {
         return Err(UpgradeError::OidMalformed(s.to_string()));
     }
     Ok(s.to_string())
@@ -402,7 +410,10 @@ mod tests {
         // A path with a space and a comma: `tok` escapes both, `esc` neither.
         let raw = b"a dir/with,comma.yml";
         let esc_path = esc(raw);
-        assert_eq!(esc_path, "a dir/with,comma.yml", "esc leaves both bytes bare");
+        assert_eq!(
+            esc_path, "a dir/with,comma.yml",
+            "esc leaves both bytes bare"
+        );
         let encoded = encode_forced(std::slice::from_ref(&esc_path)).unwrap();
         assert_eq!(encoded, "a\\x20dir/with\\x2ccomma.yml");
         assert_ne!(encoded, esc_path, "esc in a forced= slot is the R2 defect");

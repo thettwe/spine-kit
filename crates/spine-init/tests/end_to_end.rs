@@ -328,12 +328,14 @@ mod with_a_release {
         }
         let out = Command::new(spine())
             .current_dir(&scratch.0)
-            .args([
-                "init", "--ci", "github", "--identity", "alice@example.com",
-            ])
+            .args(["init", "--ci", "github", "--identity", "alice@example.com"])
             .output()
             .expect("spine runs");
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
 
         let ci_sh = scratch.read(".spine/ci.sh");
         assert!(
@@ -405,9 +407,19 @@ mod with_a_release {
 
         // Solo, with the pipeline key in the same invocation.
         let out = run(&[
-            "init", "--ci", "generic", "--signer-key", "alice.pub", "--pipeline-key", "ci.pub",
+            "init",
+            "--ci",
+            "generic",
+            "--signer-key",
+            "alice.pub",
+            "--pipeline-key",
+            "ci.pub",
         ]);
-        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
 
         let keyring = scratch.read(".spine/allowed_signers");
         assert!(
@@ -437,7 +449,17 @@ mod with_a_release {
         }
         let ok = Command::new("ssh-keygen")
             .current_dir(&scratch.0)
-            .args(["-q", "-t", "ed25519", "-N", "", "-C", "ci@example.com", "-f", "ci"])
+            .args([
+                "-q",
+                "-t",
+                "ed25519",
+                "-N",
+                "",
+                "-C",
+                "ci@example.com",
+                "-f",
+                "ci",
+            ])
             .status()
             .map(|s| s.success())
             .unwrap_or(false);

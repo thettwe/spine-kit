@@ -53,7 +53,11 @@ pub fn parse(source: &str) -> Option<Json> {
     }
     let value = p.value()?;
     p.trivia();
-    if p.i == bytes.len() { Some(value) } else { None }
+    if p.i == bytes.len() {
+        Some(value)
+    } else {
+        None
+    }
 }
 
 struct Parser<'a> {
@@ -199,8 +203,8 @@ impl Parser<'_> {
                         b't' => out.push('\t'),
                         b'u' => {
                             let hex = self.bytes.get(self.i..self.i + 4)?;
-                            let code = u32::from_str_radix(core::str::from_utf8(hex).ok()?, 16)
-                                .ok()?;
+                            let code =
+                                u32::from_str_radix(core::str::from_utf8(hex).ok()?, 16).ok()?;
                             self.i += 4;
                             // A lone surrogate is not a character. Refusing is
                             // the fail-closed answer and matches the rest of
@@ -225,12 +229,18 @@ impl Parser<'_> {
     /// A number, `true`, `false` or `null`. Consumed and discarded.
     fn scalar(&mut self) -> Option<Json> {
         let start = self.i;
-        while self.bytes.get(self.i).is_some_and(|b| {
-            b.is_ascii_alphanumeric() || matches!(b, b'-' | b'+' | b'.' | b'_')
-        }) {
+        while self
+            .bytes
+            .get(self.i)
+            .is_some_and(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'+' | b'.' | b'_'))
+        {
             self.i += 1;
         }
-        if self.i == start { None } else { Some(Json::Other) }
+        if self.i == start {
+            None
+        } else {
+            Some(Json::Other)
+        }
     }
 }
 
@@ -305,10 +315,7 @@ mod tests {
 
     #[test]
     fn escapes_decode_and_a_lone_surrogate_is_refused() {
-        assert_eq!(
-            parse(r#""aA\n\"b""#).unwrap().as_str(),
-            Some("aA\n\"b")
-        );
+        assert_eq!(parse(r#""aA\n\"b""#).unwrap().as_str(), Some("aA\n\"b"));
         assert_eq!(parse(r#""\ud800""#), None);
     }
 }

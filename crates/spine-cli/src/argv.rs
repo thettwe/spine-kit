@@ -60,31 +60,45 @@ pub struct Init {
 pub enum ArgError {
     NoCommand,
     UnknownCommand(String),
-    UnknownFlag { command: &'static str, flag: String },
+    UnknownFlag {
+        command: &'static str,
+        flag: String,
+    },
     MissingValue(String),
     /// PB §11 removed this flag on 2026-08-27; naming it explicitly is kinder
     /// than "unknown flag" to anyone with it in a script.
-    WithdrawnFlag { flag: String, why: &'static str },
+    WithdrawnFlag {
+        flag: String,
+        why: &'static str,
+    },
     /// The value is outside the domain PB §11 fixes for the flag.
-    BadValue { flag: String, value: String, domain: &'static str },
+    BadValue {
+        flag: String,
+        value: String,
+        domain: &'static str,
+    },
 }
 
 impl fmt::Display for ArgError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ArgError::NoCommand => write!(
-                f,
-                "usage: spine <init|new|index|check> [options]"
-            ),
+            ArgError::NoCommand => write!(f, "usage: spine <init|new|index|check> [options]"),
             ArgError::UnknownCommand(c) => {
-                write!(f, "unknown command {c:?}; spine has four: init, new, index, check")
+                write!(
+                    f,
+                    "unknown command {c:?}; spine has four: init, new, index, check"
+                )
             }
             ArgError::UnknownFlag { command, flag } => {
                 write!(f, "spine {command}: unknown flag {flag}")
             }
             ArgError::MissingValue(flag) => write!(f, "{flag} needs a value"),
             ArgError::WithdrawnFlag { flag, why } => write!(f, "{flag} was removed: {why}"),
-            ArgError::BadValue { flag, value, domain } => {
+            ArgError::BadValue {
+                flag,
+                value,
+                domain,
+            } => {
                 write!(f, "{flag} {value:?} is not one of {domain}")
             }
         }
@@ -230,7 +244,10 @@ mod tests {
     fn the_four_commands_and_nothing_else() {
         assert!(matches!(parse(&argv(&["init"])), Ok(Command::Init(_))));
         assert!(matches!(parse(&argv(&["new"])), Ok(Command::New)));
-        assert!(matches!(parse(&argv(&["index"])), Ok(Command::Index { .. })));
+        assert!(matches!(
+            parse(&argv(&["index"])),
+            Ok(Command::Index { .. })
+        ));
         assert!(matches!(parse(&argv(&["check"])), Ok(Command::Check)));
 
         // PB §11 lists `spine context`, `spine stats`, `spine review` and
@@ -249,14 +266,20 @@ mod tests {
     fn init_flags_round_trip() {
         let parsed = parse(&argv(&[
             "init",
-            "--ci", "github",
-            "--langs", "python,ts",
-            "--isolation", "container",
-            "--trunk", "main",
+            "--ci",
+            "github",
+            "--langs",
+            "python,ts",
+            "--isolation",
+            "container",
+            "--trunk",
+            "main",
             "--dry-run",
         ]))
         .unwrap();
-        let Command::Init(init) = parsed else { panic!() };
+        let Command::Init(init) = parsed else {
+            panic!()
+        };
         assert_eq!(init.ci.as_deref(), Some("github"));
         assert_eq!(
             init.langs,
@@ -295,8 +318,7 @@ mod tests {
         };
         assert_eq!(bare.rollback, Some(None));
 
-        let Command::Init(with_sha) =
-            parse(&argv(&["init", "--rollback", "abc123"])).unwrap()
+        let Command::Init(with_sha) = parse(&argv(&["init", "--rollback", "abc123"])).unwrap()
         else {
             panic!()
         };
@@ -317,9 +339,12 @@ mod tests {
     fn adopt_and_force_accumulate() {
         let Command::Init(init) = parse(&argv(&[
             "init",
-            "--adopt", "AGENTS.md#spine",
-            "--force", ".spine/ci.sh",
-            "--force", ".gitignore#spine",
+            "--adopt",
+            "AGENTS.md#spine",
+            "--force",
+            ".spine/ci.sh",
+            "--force",
+            ".gitignore#spine",
         ]))
         .unwrap() else {
             panic!()

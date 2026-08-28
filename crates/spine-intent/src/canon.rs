@@ -151,7 +151,11 @@ pub fn check(d: &[u8]) -> Result<Canonical<'_>, Refusal> {
 /// leaves diagnostics free — but a `nul-byte` with no line is useless to the
 /// author who has to find it.
 fn line_of(d: &[u8], offset: usize) -> usize {
-    d[..offset.min(d.len())].iter().filter(|&&b| b == b'\n').count() + 1
+    d[..offset.min(d.len())]
+        .iter()
+        .filter(|&&b| b == b'\n')
+        .count()
+        + 1
 }
 
 #[cfg(test)]
@@ -284,7 +288,10 @@ mod tests {
         // rule 9 precedes rule 11 (fence).
         assert_eq!(refuse(b"# a\n----- \n"), Status::TrailingWhitespace);
         // rule 11 precedes rule 12 (trailer).
-        assert_eq!(refuse(b"# a\n-----\nSpine-Seal: x\n"), Status::FenceCollision);
+        assert_eq!(
+            refuse(b"# a\n-----\nSpine-Seal: x\n"),
+            Status::FenceCollision
+        );
     }
 
     #[test]

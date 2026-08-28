@@ -526,12 +526,8 @@ mod tests {
             "INT-42",   // under-padded
             "INT-0042", // over-padded
             "INT-000",  // zero
-            "INT-+42",
-            "int-042", // case
-            "TASK-042",
-            "INT-",
-            "INT-00",
-            "INT-042x",
+            "INT-+42", "int-042", // case
+            "TASK-042", "INT-", "INT-00", "INT-042x",
         ] {
             assert_eq!(IntentId::parse(s), None, "{s} must not be an id");
         }
@@ -540,7 +536,10 @@ mod tests {
     /// ID §2.3's bound, on both sides.
     #[test]
     fn the_numeral_is_bounded_at_two_to_the_fifty_three_minus_one() {
-        assert_eq!(intent("INT-9007199254740991").number(), IntentId::MAX_NUMBER);
+        assert_eq!(
+            intent("INT-9007199254740991").number(),
+            IntentId::MAX_NUMBER
+        );
         assert_eq!(IntentId::parse("INT-9007199254740992"), None);
     }
 
@@ -668,8 +667,14 @@ mod tests {
     /// one.
     #[test]
     fn the_separator_is_one_or_more_spaces_or_tabs_and_nothing_else() {
-        assert_eq!(scan_file("# @verifies\tINT-042/AC-1\n", Lang::Python).len(), 1);
-        assert_eq!(scan_file("# @verifies   INT-042/AC-1\n", Lang::Python).len(), 1);
+        assert_eq!(
+            scan_file("# @verifies\tINT-042/AC-1\n", Lang::Python).len(),
+            1
+        );
+        assert_eq!(
+            scan_file("# @verifies   INT-042/AC-1\n", Lang::Python).len(),
+            1
+        );
         assert!(scan_file("# @verifiesINT-042/AC-1\n", Lang::Python).is_empty());
     }
 

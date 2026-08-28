@@ -187,7 +187,9 @@ impl TrailerName {
 
     /// The `-Sig` line this statement takes, or `None` for an unsigned trailer.
     pub fn sig(self) -> Option<TrailerName> {
-        TrailerName::ALL.into_iter().find(|n| n.signs() == Some(self))
+        TrailerName::ALL
+            .into_iter()
+            .find(|n| n.signs() == Some(self))
     }
 
     pub fn is_sig(self) -> bool {
@@ -253,9 +255,8 @@ pub fn parse_line(line: &[u8]) -> Result<Trailer<'_>, EnvelopeError> {
             show(name)
         )));
     }
-    let name = TrailerName::parse(name).ok_or_else(|| {
-        EnvelopeError::malformed(format!("unknown trailer name: {}", show(name)))
-    })?;
+    let name = TrailerName::parse(name)
+        .ok_or_else(|| EnvelopeError::malformed(format!("unknown trailer name: {}", show(name))))?;
 
     // "exactly `:` `U+0020`" — not a tab, not two spaces, not a bare colon.
     if !rest.starts_with(b": ") {
@@ -265,7 +266,9 @@ pub fn parse_line(line: &[u8]) -> Result<Trailer<'_>, EnvelopeError> {
     }
     let payload = &rest[2..];
     if payload.is_empty() {
-        return Err(EnvelopeError::malformed(format!("{name} has empty payload")));
+        return Err(EnvelopeError::malformed(format!(
+            "{name} has empty payload"
+        )));
     }
     if let Some(i) = payload.iter().position(|&b| b == 0x0D || b == 0x00) {
         return Err(EnvelopeError::malformed(format!(
@@ -410,11 +413,7 @@ impl Key {
 ///
 /// `lead` counts the positional fields PB §11 prints before the first `key=`
 /// (the intent id, or `quick`, or `reseal`).
-pub fn take<'a>(
-    payload: &'a [u8],
-    lead: usize,
-    keys: &[Key],
-) -> Result<Fields<'a>, EnvelopeError> {
+pub fn take<'a>(payload: &'a [u8], lead: usize, keys: &[Key]) -> Result<Fields<'a>, EnvelopeError> {
     let fields = split_fields(payload)?;
     if fields.len() < lead {
         return Err(EnvelopeError::malformed(format!(
@@ -533,7 +532,8 @@ pub(crate) fn counter(value: &[u8], what: &str) -> Result<u64, EnvelopeError> {
 pub(crate) fn oid(value: &[u8], what: &str) -> Result<String, EnvelopeError> {
     let s = as_str(value, what)?;
     let ok = (s.len() == 40 || s.len() == 64)
-        && s.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b));
     if !ok {
         return Err(EnvelopeError::malformed(format!(
             "{what} is not a full-length lowercase object id: {s}"
@@ -638,7 +638,10 @@ mod tests {
     #[test]
     fn exactly_one_space_after_the_colon() {
         assert!(parse_line(b"Spine-Lane:quick").is_err());
-        assert!(parse_line(b"Spine-Lane:  quick").is_ok(), "payload is ' quick'");
+        assert!(
+            parse_line(b"Spine-Lane:  quick").is_ok(),
+            "payload is ' quick'"
+        );
         assert_eq!(
             parse_line(b"Spine-Lane:  quick").unwrap().payload,
             b" quick",
@@ -648,7 +651,8 @@ mod tests {
 
     #[test]
     fn a_reasons_spaces_do_not_split_the_field() {
-        let payload = br#"INT-042 reason="AC-3 was not testable as written" signer=alice@example.com"#;
+        let payload =
+            br#"INT-042 reason="AC-3 was not testable as written" signer=alice@example.com"#;
         let fields = split_fields(payload).unwrap();
         assert_eq!(fields.len(), 3);
         assert_eq!(fields[1], br#"reason="AC-3 was not testable as written""#);

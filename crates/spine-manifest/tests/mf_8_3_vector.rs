@@ -135,10 +135,7 @@ fn the_eight_file_records_carry_their_classes_and_regions() {
 
     // The three region records all use the key `spine`, which is never a
     // `templates` index — the record's own `template` member is.
-    let regions: Vec<&str> = files
-        .iter()
-        .filter_map(|f| f.region.as_deref())
-        .collect();
+    let regions: Vec<&str> = files.iter().filter_map(|f| f.region.as_deref()).collect();
     assert_eq!(regions, vec!["spine", "spine", "spine"]);
 }
 
@@ -243,16 +240,43 @@ fn framing_faults_are_refused_before_json() {
 
 #[test]
 fn scalar_domains_are_enforced() {
-    assert_eq!(mutate(r#""repo":"myrepo""#, r#""repo":"my repo""#), Status::RepoOutOfGrammar);
-    assert_eq!(mutate(r#""version":"1.4.0""#, r#""version":"none""#), Status::CliVersionOutOfGrammar);
-    assert_eq!(mutate(r#""object_format":"sha1""#, r#""object_format":"md5""#), Status::ObjectFormatUnknown);
-    assert_eq!(mutate(r#""ci":"github""#, r#""ci":"jenkins""#), Status::CiUnknown);
-    assert_eq!(mutate(r#""isolation":"container""#, r#""isolation":"vm""#), Status::IsolationUnknown);
-    assert_eq!(mutate(r#""timeout":1800"#, r#""timeout":0"#), Status::TimeoutOutOfRange);
-    assert_eq!(mutate(r#""timeout":1800"#, r#""timeout":86401"#), Status::TimeoutOutOfRange);
+    assert_eq!(
+        mutate(r#""repo":"myrepo""#, r#""repo":"my repo""#),
+        Status::RepoOutOfGrammar
+    );
+    assert_eq!(
+        mutate(r#""version":"1.4.0""#, r#""version":"none""#),
+        Status::CliVersionOutOfGrammar
+    );
+    assert_eq!(
+        mutate(r#""object_format":"sha1""#, r#""object_format":"md5""#),
+        Status::ObjectFormatUnknown
+    );
+    assert_eq!(
+        mutate(r#""ci":"github""#, r#""ci":"jenkins""#),
+        Status::CiUnknown
+    );
+    assert_eq!(
+        mutate(r#""isolation":"container""#, r#""isolation":"vm""#),
+        Status::IsolationUnknown
+    );
+    assert_eq!(
+        mutate(r#""timeout":1800"#, r#""timeout":0"#),
+        Status::TimeoutOutOfRange
+    );
+    assert_eq!(
+        mutate(r#""timeout":1800"#, r#""timeout":86401"#),
+        Status::TimeoutOutOfRange
+    );
     // `kotlin` was dropped by the owner and is not reserved at this level.
-    assert_eq!(mutate(r#""langs":["python"]"#, r#""langs":["kotlin"]"#), Status::LangsUnknown);
-    assert_eq!(mutate(r#""langs":["python"]"#, r#""langs":[]"#), Status::LangsEmpty);
+    assert_eq!(
+        mutate(r#""langs":["python"]"#, r#""langs":["kotlin"]"#),
+        Status::LangsUnknown
+    );
+    assert_eq!(
+        mutate(r#""langs":["python"]"#, r#""langs":[]"#),
+        Status::LangsEmpty
+    );
 }
 
 /// MF §3.5: `base` is present **iff** the class is `user-modified`. Both
@@ -288,7 +312,10 @@ fn blob_ids_are_never_abbreviated() {
 #[test]
 fn a_record_at_the_wrong_template_version_is_refused() {
     assert_eq!(
-        mutate(r#""template":"ci-github-land@4""#, r#""template":"ci-github-land@3""#),
+        mutate(
+            r#""template":"ci-github-land@4""#,
+            r#""template":"ci-github-land@3""#
+        ),
         Status::TemplateVersionMismatch
     );
     assert_eq!(
@@ -302,7 +329,10 @@ fn a_record_at_the_wrong_template_version_is_refused() {
 #[test]
 fn resign_is_intent_only_and_never_above_the_current_version() {
     assert_eq!(
-        mutate(r#""resign":{"intent":2"#, r#""resign":{"constitution":1,"intent":2"#),
+        mutate(
+            r#""resign":{"intent":2"#,
+            r#""resign":{"constitution":1,"intent":2"#
+        ),
         Status::ResignKeyUnknown
     );
     assert_eq!(

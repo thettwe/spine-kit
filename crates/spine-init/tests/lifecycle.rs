@@ -63,7 +63,10 @@ impl Scratch {
     fn commit(&self, message: &str) -> String {
         git(&self.0, &["add", "-A"]).unwrap();
         git(&self.0, &["commit", "-q", "-m", message]).unwrap();
-        git(&self.0, &["rev-parse", "HEAD"]).unwrap().trim().to_string()
+        git(&self.0, &["rev-parse", "HEAD"])
+            .unwrap()
+            .trim()
+            .to_string()
     }
 
     fn mode(&self, commit: &str, path: &str) -> String {
@@ -83,7 +86,11 @@ impl Drop for Scratch {
 }
 
 fn git(dir: &Path, args: &[&str]) -> Option<String> {
-    let out = Command::new("git").current_dir(dir).args(args).output().ok()?;
+    let out = Command::new("git")
+        .current_dir(dir)
+        .args(args)
+        .output()
+        .ok()?;
     out.status
         .success()
         .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
@@ -193,15 +200,57 @@ fn fixture(name: &str) -> Option<Fixture> {
             "1.3.0",
             3,
             &[
-                Rec { path: ".spine/ci.sh", owner: "spine-owned", blob: blob("old ci\n"), template: "ci-generic@3".into(), base: None },
-                Rec { path: "mode-only.sh", owner: "spine-owned", blob: blob("same\n"), template: "ci-generic@3".into(), base: None },
-                Rec { path: "unchanged.sh", owner: "spine-owned", blob: blob("same2\n"), template: "ci-generic@3".into(), base: None },
+                Rec {
+                    path: ".spine/ci.sh",
+                    owner: "spine-owned",
+                    blob: blob("old ci\n"),
+                    template: "ci-generic@3".into(),
+                    base: None,
+                },
+                Rec {
+                    path: "mode-only.sh",
+                    owner: "spine-owned",
+                    blob: blob("same\n"),
+                    template: "ci-generic@3".into(),
+                    base: None,
+                },
+                Rec {
+                    path: "unchanged.sh",
+                    owner: "spine-owned",
+                    blob: blob("same2\n"),
+                    template: "ci-generic@3".into(),
+                    base: None,
+                },
                 // The `user-modified` trap: the record names the **render**
                 // (`render v3`), the tree holds the human's copy.
-                Rec { path: "land.yml", owner: "user-modified", blob: blob("render v3\n"), template: "ci-github-land@3".into(), base: Some(blob("render v3\n")) },
-                Rec { path: "AGENTS.md#spine", owner: "spine-owned", blob: blob("old region\n"), template: "agents-block@2".into(), base: None },
-                Rec { path: "CONSTITUTION.md", owner: "user-owned", blob: blob("old constitution\n"), template: "constitution@1".into(), base: None },
-                Rec { path: ".spine/allowed_signers", owner: "user-owned", blob: blob("old keyring\n"), template: "keyring@1".into(), base: None },
+                Rec {
+                    path: "land.yml",
+                    owner: "user-modified",
+                    blob: blob("render v3\n"),
+                    template: "ci-github-land@3".into(),
+                    base: Some(blob("render v3\n")),
+                },
+                Rec {
+                    path: "AGENTS.md#spine",
+                    owner: "spine-owned",
+                    blob: blob("old region\n"),
+                    template: "agents-block@2".into(),
+                    base: None,
+                },
+                Rec {
+                    path: "CONSTITUTION.md",
+                    owner: "user-owned",
+                    blob: blob("old constitution\n"),
+                    template: "constitution@1".into(),
+                    base: None,
+                },
+                Rec {
+                    path: ".spine/allowed_signers",
+                    owner: "user-owned",
+                    blob: blob("old keyring\n"),
+                    template: "keyring@1".into(),
+                    base: None,
+                },
             ],
             &[("constitution", "CONSTITUTION.md")],
         ),
@@ -228,17 +277,68 @@ fn fixture(name: &str) -> Option<Fixture> {
             "1.4.0",
             4,
             &[
-                Rec { path: ".spine/ci.sh", owner: "spine-owned", blob: blob("new ci\n"), template: "ci-generic@4".into(), base: None },
-                Rec { path: "mode-only.sh", owner: "spine-owned", blob: blob("same\n"), template: "ci-generic@4".into(), base: None },
-                Rec { path: "unchanged.sh", owner: "spine-owned", blob: blob("same2\n"), template: "ci-generic@4".into(), base: None },
-                Rec { path: "newthing.sh", owner: "spine-owned", blob: blob("created by the upgrade\n"), template: "ci-generic@4".into(), base: None },
-                Rec { path: "land.yml", owner: "user-modified", blob: blob("render v4\n"), template: "ci-github-land@4".into(), base: Some(blob("render v4\n")) },
-                Rec { path: "AGENTS.md#spine", owner: "spine-owned", blob: blob("new region\n"), template: "agents-block@2".into(), base: None },
-                Rec { path: "CONSTITUTION.md", owner: "user-owned", blob: blob("new constitution\n"), template: "constitution@1".into(), base: None },
-                Rec { path: ".spine/allowed_signers", owner: "user-owned", blob: blob("old keyring\n"), template: "keyring@1".into(), base: None },
+                Rec {
+                    path: ".spine/ci.sh",
+                    owner: "spine-owned",
+                    blob: blob("new ci\n"),
+                    template: "ci-generic@4".into(),
+                    base: None,
+                },
+                Rec {
+                    path: "mode-only.sh",
+                    owner: "spine-owned",
+                    blob: blob("same\n"),
+                    template: "ci-generic@4".into(),
+                    base: None,
+                },
+                Rec {
+                    path: "unchanged.sh",
+                    owner: "spine-owned",
+                    blob: blob("same2\n"),
+                    template: "ci-generic@4".into(),
+                    base: None,
+                },
+                Rec {
+                    path: "newthing.sh",
+                    owner: "spine-owned",
+                    blob: blob("created by the upgrade\n"),
+                    template: "ci-generic@4".into(),
+                    base: None,
+                },
+                Rec {
+                    path: "land.yml",
+                    owner: "user-modified",
+                    blob: blob("render v4\n"),
+                    template: "ci-github-land@4".into(),
+                    base: Some(blob("render v4\n")),
+                },
+                Rec {
+                    path: "AGENTS.md#spine",
+                    owner: "spine-owned",
+                    blob: blob("new region\n"),
+                    template: "agents-block@2".into(),
+                    base: None,
+                },
+                Rec {
+                    path: "CONSTITUTION.md",
+                    owner: "user-owned",
+                    blob: blob("new constitution\n"),
+                    template: "constitution@1".into(),
+                    base: None,
+                },
+                Rec {
+                    path: ".spine/allowed_signers",
+                    owner: "user-owned",
+                    blob: blob("old keyring\n"),
+                    template: "keyring@1".into(),
+                    base: None,
+                },
             ],
             // `B`'s floor has grown a key since `U^` — the union must keep it.
-            &[("agent_context", "AGENTS.md"), ("constitution", "CONSTITUTION.md")],
+            &[
+                ("agent_context", "AGENTS.md"),
+                ("constitution", "CONSTITUTION.md"),
+            ],
         ),
     );
     let upgrade = scratch.commit("1.4.0");
@@ -282,7 +382,9 @@ fn the_default_target_is_the_last_commit_that_touched_the_manifest() {
 /// first-parent chain is refused rather than restored from.
 #[test]
 fn an_unreachable_target_is_refused() {
-    let Some(f) = fixture("unreachable") else { return };
+    let Some(f) = fixture("unreachable") else {
+        return;
+    };
     let repo = f.scratch.repo();
     // A commit on a side branch: reachable as an object, not first-parent.
     git(&f.scratch.0, &["checkout", "-q", "-b", "side", &f.ancestor]).unwrap();
@@ -302,7 +404,9 @@ fn an_unreachable_target_is_refused() {
 /// the human's copy and whose recorded `blob` is the render they diverged from."
 #[test]
 fn a_user_modified_path_is_restored_to_the_tree_blob_and_not_the_record_blob() {
-    let Some(f) = fixture("user-modified") else { return };
+    let Some(f) = fixture("user-modified") else {
+        return;
+    };
     let repo = f.scratch.repo();
     let target = rollback::locate(&repo, "HEAD", None).unwrap();
     let (ancestor, base) = manifests(&f);
@@ -360,7 +464,9 @@ fn a_path_whose_only_change_was_its_mode_is_still_restored() {
 /// `unchanged.sh` is in neither commit's diff and is still a row.
 #[test]
 fn a_path_absent_from_the_diff_is_still_a_row_of_p() {
-    let Some(f) = fixture("from-manifests") else { return };
+    let Some(f) = fixture("from-manifests") else {
+        return;
+    };
     let repo = f.scratch.repo();
     let target = rollback::locate(&repo, "HEAD", None).unwrap();
     let (ancestor, base) = manifests(&f);
@@ -371,8 +477,14 @@ fn a_path_absent_from_the_diff_is_still_a_row_of_p() {
         &["diff", "--name-only", &f.ancestor, &f.upgrade],
     )
     .unwrap();
-    assert!(!diff.contains("unchanged.sh"), "the premise: not in the diff");
-    assert_eq!(row(&plan, "unchanged.sh").action, RestoreAction::AlreadyRestored);
+    assert!(
+        !diff.contains("unchanged.sh"),
+        "the premise: not in the diff"
+    );
+    assert_eq!(
+        row(&plan, "unchanged.sh").action,
+        RestoreAction::AlreadyRestored
+    );
 }
 
 /// PB §6.7: "`git rm` for paths `U` created".
@@ -395,7 +507,9 @@ fn a_path_the_upgrade_created_is_deleted() {
 /// outright failure, so it must not even be a row.
 #[test]
 fn a_user_owned_path_is_neither_in_p_nor_touched() {
-    let Some(f) = fixture("user-owned") else { return };
+    let Some(f) = fixture("user-owned") else {
+        return;
+    };
     let repo = f.scratch.repo();
     let target = rollback::locate(&repo, "HEAD", None).unwrap();
     let (ancestor, base) = manifests(&f);
@@ -426,8 +540,10 @@ fn a_region_is_restored_without_disturbing_its_host() {
 
     // A human edits the prose *outside* the block after the upgrade. The
     // rollback must not undo that.
-    f.scratch
-        .write("AGENTS.md", &agents_md("new region\n").replace("hand written below", "edited below"));
+    f.scratch.write(
+        "AGENTS.md",
+        &agents_md("new region\n").replace("hand written below", "edited below"),
+    );
     f.scratch.commit("prose edit");
 
     let plan = rollback::compute(&repo, &target, &ancestor, &base, &[]).unwrap();
@@ -448,7 +564,8 @@ fn a_path_edited_after_the_upgrade_refuses_until_forced() {
     let repo = f.scratch.repo();
     let target = rollback::locate(&repo, "HEAD", None).unwrap();
 
-    f.scratch.write(".spine/ci.sh", "edited after the upgrade\n");
+    f.scratch
+        .write(".spine/ci.sh", "edited after the upgrade\n");
     f.scratch.commit("hand edit");
     let (ancestor, base) = manifests(&f);
 
@@ -459,8 +576,8 @@ fn a_path_edited_after_the_upgrade_refuses_until_forced() {
         Some(RestoreRefusal::ModifiedSinceUpgrade { .. })
     ));
 
-    let forced = rollback::compute(&repo, &target, &ancestor, &base, &[".spine/ci.sh".into()])
-        .unwrap();
+    let forced =
+        rollback::compute(&repo, &target, &ancestor, &base, &[".spine/ci.sh".into()]).unwrap();
     assert!(!forced.refuses());
     rollback::execute(&repo, &target, &forced).unwrap();
     assert_eq!(f.scratch.read(".spine/ci.sh"), "old ci\n");
@@ -490,7 +607,9 @@ fn the_rollback_manifest_keeps_a_floor_key_the_upgrade_added() {
 /// its blob, and each deleted-but-modified one is named.
 #[test]
 fn uninstall_removes_every_spine_owned_path_and_names_the_modified_ones() {
-    let Some(f) = fixture("uninstall") else { return };
+    let Some(f) = fixture("uninstall") else {
+        return;
+    };
     let repo = f.scratch.repo();
 
     // A hand edit to a spine-owned path, uncommitted-then-committed, so the
@@ -513,7 +632,12 @@ fn uninstall_removes_every_spine_owned_path_and_names_the_modified_ones() {
 
     uninstall::execute(&repo, &plan).unwrap();
 
-    for path in [".spine/ci.sh", "mode-only.sh", "unchanged.sh", "newthing.sh"] {
+    for path in [
+        ".spine/ci.sh",
+        "mode-only.sh",
+        "unchanged.sh",
+        "newthing.sh",
+    ] {
         assert!(!f.scratch.exists(path), "{path} must be absent from T");
     }
     assert!(!f.scratch.exists(".spine/manifest.json"));
@@ -530,7 +654,9 @@ fn uninstall_removes_every_spine_owned_path_and_names_the_modified_ones() {
 /// human's file readable". Here the whole block goes and the prose stays.
 #[test]
 fn uninstall_leaves_every_managed_region_marker_free() {
-    let Some(f) = fixture("uninstall-region") else { return };
+    let Some(f) = fixture("uninstall-region") else {
+        return;
+    };
     let repo = f.scratch.repo();
     let base = rollback::manifest_at(&repo, "HEAD", ObjectFormat::Sha1).unwrap();
     let tree = HeadTree { repo: &repo };
@@ -593,7 +719,9 @@ fn abort_restores_head_deletes_created_paths_and_discards_staging() {
         "a path HEAD does not have is a path the run created"
     );
     assert!(
-        aborted.deleted.contains(&"created-by-the-run.sh".to_string())
+        aborted
+            .deleted
+            .contains(&"created-by-the-run.sh".to_string())
     );
     assert!(aborted.staging.is_some());
     assert!(spine_init::staging::pending(repo.root()).unwrap().is_none());
@@ -607,7 +735,9 @@ fn abort_restores_head_deletes_created_paths_and_discards_staging() {
 /// describes a run that never completed.
 #[test]
 fn abort_restores_the_manifest_itself() {
-    let Some(f) = fixture("abort-manifest") else { return };
+    let Some(f) = fixture("abort-manifest") else {
+        return;
+    };
     let repo = f.scratch.repo();
     let before = f.scratch.read(".spine/manifest.json");
     f.scratch.write(".spine/manifest.json", "{\"half\":1}\n");
@@ -623,7 +753,9 @@ fn abort_restores_the_manifest_itself() {
 /// `user-modified`; a conflict refuses (conflict markers never touch the tree)."
 #[test]
 fn merge_file_is_three_way_and_a_conflict_yields_no_bytes() {
-    let Some(scratch) = Scratch::new("merge-file") else { return };
+    let Some(scratch) = Scratch::new("merge-file") else {
+        return;
+    };
     scratch.write("seed", "x\n");
     scratch.commit("seed");
     let repo = scratch.repo();
@@ -711,7 +843,9 @@ fn refusing_plan(
 /// recorded `base` becomes this render, "updated on every `--merge`" (MF §3.5).
 #[test]
 fn merge_lands_the_merge_result_and_reclassifies() {
-    let Some((scratch, manifest, desired)) = diverged("resolve-merge") else { return };
+    let Some((scratch, manifest, desired)) = diverged("resolve-merge") else {
+        return;
+    };
     let repo = scratch.repo();
     let plan = refusing_plan(&repo, &desired, &manifest);
 
@@ -720,7 +854,10 @@ fn merge_lands_the_merge_result_and_reclassifies() {
         &plan,
         &desired,
         Some(&manifest),
-        &spine_init::Resolutions { merge: true, ..Default::default() },
+        &spine_init::Resolutions {
+            merge: true,
+            ..Default::default()
+        },
     )
     .unwrap();
 
@@ -745,7 +882,9 @@ fn merge_lands_the_merge_result_and_reclassifies() {
 /// "a conflict refuses (conflict markers never touch the tree)."
 #[test]
 fn a_conflicting_merge_refuses_and_writes_nothing() {
-    let Some((scratch, manifest, mut desired)) = diverged("resolve-conflict") else { return };
+    let Some((scratch, manifest, mut desired)) = diverged("resolve-conflict") else {
+        return;
+    };
     // The render moves the same line the human did.
     desired[0].content = b"RENDER\ntwo\nthree\n".to_vec();
     let repo = scratch.repo();
@@ -756,7 +895,10 @@ fn a_conflicting_merge_refuses_and_writes_nothing() {
         &plan,
         &desired,
         Some(&manifest),
-        &spine_init::Resolutions { merge: true, ..Default::default() },
+        &spine_init::Resolutions {
+            merge: true,
+            ..Default::default()
+        },
     )
     .unwrap_err();
     assert!(matches!(err, spine_init::ResolveError::MergeConflict(_)));
@@ -772,7 +914,9 @@ fn a_conflicting_merge_refuses_and_writes_nothing() {
 /// wrote there.
 #[test]
 fn adopt_reclassifies_without_writing() {
-    let Some((scratch, manifest, desired)) = diverged("resolve-adopt") else { return };
+    let Some((scratch, manifest, desired)) = diverged("resolve-adopt") else {
+        return;
+    };
     let repo = scratch.repo();
     let plan = refusing_plan(&repo, &desired, &manifest);
 
@@ -781,7 +925,10 @@ fn adopt_reclassifies_without_writing() {
         &plan,
         &desired,
         Some(&manifest),
-        &spine_init::Resolutions { adopt: vec![".spine/ci.sh".into()], ..Default::default() },
+        &spine_init::Resolutions {
+            adopt: vec![".spine/ci.sh".into()],
+            ..Default::default()
+        },
     )
     .unwrap();
 
@@ -804,7 +951,9 @@ fn adopt_reclassifies_without_writing() {
 /// were actually overwritten.
 #[test]
 fn force_overwrites_and_lands_in_the_forced_list() {
-    let Some((scratch, manifest, desired)) = diverged("resolve-force") else { return };
+    let Some((scratch, manifest, desired)) = diverged("resolve-force") else {
+        return;
+    };
     let repo = scratch.repo();
     let plan = refusing_plan(&repo, &desired, &manifest);
 
@@ -813,13 +962,19 @@ fn force_overwrites_and_lands_in_the_forced_list() {
         &plan,
         &desired,
         Some(&manifest),
-        &spine_init::Resolutions { force: vec![".spine/ci.sh".into()], ..Default::default() },
+        &spine_init::Resolutions {
+            force: vec![".spine/ci.sh".into()],
+            ..Default::default()
+        },
     )
     .unwrap();
 
     assert_eq!(resolved.plan.rows[0].action, spine_init::Action::Update);
     assert_eq!(resolved.forced, vec![".spine/ci.sh".to_string()]);
-    assert!(resolved.reclassified.is_empty(), "an override is not a class change");
+    assert!(
+        resolved.reclassified.is_empty(),
+        "an override is not a class change"
+    );
 
     // And the line it becomes.
     let line = spine_init::UpgradeLine {
@@ -838,7 +993,9 @@ fn force_overwrites_and_lands_in_the_forced_list() {
 /// ordered — there is no precedence rule in the corpus to appeal to.
 #[test]
 fn adopt_and_force_on_one_path_is_refused() {
-    let Some((scratch, manifest, desired)) = diverged("resolve-both") else { return };
+    let Some((scratch, manifest, desired)) = diverged("resolve-both") else {
+        return;
+    };
     let repo = scratch.repo();
     let plan = refusing_plan(&repo, &desired, &manifest);
 
@@ -862,7 +1019,9 @@ fn adopt_and_force_on_one_path_is_refused() {
 /// a typo stops looking like a resolution.
 #[test]
 fn resolving_a_path_that_did_not_refuse_is_refused() {
-    let Some((scratch, manifest, desired)) = diverged("resolve-typo") else { return };
+    let Some((scratch, manifest, desired)) = diverged("resolve-typo") else {
+        return;
+    };
     let repo = scratch.repo();
     let plan = refusing_plan(&repo, &desired, &manifest);
 
@@ -872,7 +1031,10 @@ fn resolving_a_path_that_did_not_refuse_is_refused() {
             &plan,
             &desired,
             Some(&manifest),
-            &spine_init::Resolutions { force: vec![".spine/ci.hs".into()], ..Default::default() },
+            &spine_init::Resolutions {
+                force: vec![".spine/ci.hs".into()],
+                ..Default::default()
+            },
         ),
         Err(spine_init::ResolveError::NotRefused(_))
     ));
@@ -883,7 +1045,9 @@ fn resolving_a_path_that_did_not_refuse_is_refused() {
 /// blank lines in it — which every envelope has — does not split a record.
 #[test]
 fn the_uninstall_landing_is_located_by_a_first_parent_walk() {
-    let Some(scratch) = Scratch::new("since") else { return };
+    let Some(scratch) = Scratch::new("since") else {
+        return;
+    };
     scratch.write("a", "1\n");
     scratch.commit("quick: install");
 
@@ -900,7 +1064,10 @@ fn the_uninstall_landing_is_located_by_a_first_parent_walk() {
         ],
     )
     .unwrap();
-    let uninstall = git(&scratch.0, &["rev-parse", "HEAD"]).unwrap().trim().to_string();
+    let uninstall = git(&scratch.0, &["rev-parse", "HEAD"])
+        .unwrap()
+        .trim()
+        .to_string();
 
     scratch.write("a", "3\n");
     scratch.commit("quick: an ordinary landing");
@@ -932,7 +1099,9 @@ fn the_uninstall_landing_is_located_by_a_first_parent_walk() {
 /// MF §6.7.2 reads a region out of the host file at `<sha>`, which is reachable.
 #[test]
 fn merging_a_region_has_no_reachable_base_and_says_so() {
-    let Some(scratch) = Scratch::new("resolve-region") else { return };
+    let Some(scratch) = Scratch::new("resolve-region") else {
+        return;
+    };
     let recorded_body = "one\ntwo\nthree\n";
     scratch.write("AGENTS.md", &agents_md(recorded_body));
     scratch.write(
@@ -960,7 +1129,10 @@ fn merging_a_region_has_no_reachable_base_and_says_so() {
         "git never stored the region's bytes as an object"
     );
     let host_blob = git(&scratch.0, &["rev-parse", "HEAD:AGENTS.md"]).unwrap();
-    assert!(repo.read_blob(host_blob.trim()).is_some(), "the host file's is");
+    assert!(
+        repo.read_blob(host_blob.trim()).is_some(),
+        "the host file's is"
+    );
 
     scratch.write(
         "AGENTS.md",
@@ -982,11 +1154,17 @@ fn merging_a_region_has_no_reachable_base_and_says_so() {
         &plan,
         &desired,
         Some(&manifest),
-        &spine_init::Resolutions { merge: true, ..Default::default() },
+        &spine_init::Resolutions {
+            merge: true,
+            ..Default::default()
+        },
     )
     .unwrap_err();
     assert!(
-        matches!(err, spine_init::ResolveError::RegionHasNoReachableBase { .. }),
+        matches!(
+            err,
+            spine_init::ResolveError::RegionHasNoReachableBase { .. }
+        ),
         "got {err:?}"
     );
     assert_eq!(
@@ -1001,7 +1179,10 @@ fn merging_a_region_has_no_reachable_base_and_says_so() {
         &plan,
         &desired,
         Some(&manifest),
-        &spine_init::Resolutions { adopt: vec!["AGENTS.md#spine".into()], ..Default::default() },
+        &spine_init::Resolutions {
+            adopt: vec!["AGENTS.md#spine".into()],
+            ..Default::default()
+        },
     )
     .unwrap();
     assert_eq!(adopted.plan.rows[0].action, spine_init::Action::Skip);

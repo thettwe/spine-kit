@@ -44,9 +44,7 @@ impl Rc {
     pub fn package_of(&self, path: &str) -> Option<&Package> {
         self.packages
             .iter()
-            .filter(|p| {
-                p.root_dir.is_empty() || path.starts_with(&format!("{}/", p.root_dir))
-            })
+            .filter(|p| p.root_dir.is_empty() || path.starts_with(&format!("{}/", p.root_dir)))
             .max_by_key(|p| p.root_dir.len())
     }
 }
@@ -190,11 +188,7 @@ pub fn sites(source: &str, path: &str, tree: &dyn Tree, rc: &Rc) -> Vec<ImportSi
 /// Only literals at parenthesis depth zero count: a condition may itself carry
 /// one — `if (const String.fromEnvironment('x') == 'y') 'b'` — and taking that
 /// as a URI would name a file the directive never mentioned.
-fn directive_uris<'a>(
-    source: &str,
-    tokens: &'a [Token],
-    start: usize,
-) -> (Vec<&'a Token>, usize) {
+fn directive_uris<'a>(source: &str, tokens: &'a [Token], start: usize) -> (Vec<&'a Token>, usize) {
     let mut uris = Vec::new();
     let mut depth = 0i32;
     let mut i = start;
@@ -219,13 +213,7 @@ fn directive_uris<'a>(
 }
 
 /// One site, all URIs — the union rule applied to a directive's branches.
-fn union_of(
-    uris: &[&Token],
-    source: &str,
-    path: &str,
-    tree: &dyn Tree,
-    rc: &Rc,
-) -> Disposition {
+fn union_of(uris: &[&Token], source: &str, path: &str, tree: &dyn Tree, rc: &Rc) -> Disposition {
     let mut targets: Vec<String> = Vec::new();
     let mut external = false;
     // Branches that resolved to nothing. Kept so the site can report them
@@ -342,7 +330,13 @@ fn part_of(
         [one] => Disposition::Repo(vec![one.clone()]),
         _ => Disposition::Unresolvable(Unresolvable::AmbiguousLibraryName),
     };
-    (Some(ImportSite { offset, disposition }), i)
+    (
+        Some(ImportSite {
+            offset,
+            disposition,
+        }),
+        i,
+    )
 }
 
 /// Every Dart file in the tree declaring `library <dotted name>;`.
@@ -574,8 +568,7 @@ mod tests {
             ("lib/t.dart", ""),
         ]);
         let rc = rc(&tree).unwrap();
-        let source =
-            "import 'a.dart' if (const String.fromEnvironment('k') == 'v') 'b.dart';\n";
+        let source = "import 'a.dart' if (const String.fromEnvironment('k') == 'v') 'b.dart';\n";
         assert_eq!(
             only(source, "lib/t.dart", &tree, &rc),
             Disposition::Repo(vec!["lib/a.dart".into(), "lib/b.dart".into()])
@@ -693,7 +686,11 @@ mod tests {
             only("import 'dart:async';\n", "lib/t.dart", &tree, &rc),
             Disposition::External
         );
-        for spec in ["file:///x.dart", "http://example.com/x.dart", "asset:a/x.dart"] {
+        for spec in [
+            "file:///x.dart",
+            "http://example.com/x.dart",
+            "asset:a/x.dart",
+        ] {
             assert_eq!(
                 only(&format!("import '{spec}';\n"), "lib/t.dart", &tree, &rc),
                 Disposition::Unresolvable(Unresolvable::UnsupportedScheme),
@@ -849,10 +846,7 @@ mod tests {
         let rc = rc(&tree).unwrap();
         let source = "import 'gone.dart' if (dart.library.io) 'also_gone.dart';\n";
         let found = sites(source, "lib/main.dart", &tree, &rc);
-        assert!(matches!(
-            found[0].disposition,
-            Disposition::Unresolvable(_)
-        ));
+        assert!(matches!(found[0].disposition, Disposition::Unresolvable(_)));
     }
 
     /// A Dart raw literal ending in a backslash — `r'a\\'` — is complete. Read

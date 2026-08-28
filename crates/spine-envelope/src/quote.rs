@@ -111,7 +111,8 @@ pub fn unquote_path(field: &[u8]) -> Result<Vec<u8>, EnvelopeError> {
                                 "octal escape in C-quoted path is not three octal digits",
                             ));
                         }
-                        let v = (digits[0] - b'0') * 64 + (digits[1] - b'0') * 8 + (digits[2] - b'0');
+                        let v =
+                            (digits[0] - b'0') * 64 + (digits[1] - b'0') * 8 + (digits[2] - b'0');
                         out.push(v);
                         i += 2; // plus the 2 added below
                     }

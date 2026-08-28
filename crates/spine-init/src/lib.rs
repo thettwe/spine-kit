@@ -20,12 +20,12 @@ pub mod staging;
 pub mod uninstall;
 pub mod upgrade;
 
-pub use abort::{Aborted, AbortError};
+pub use abort::{AbortError, Aborted};
 pub use apply::{Applied, ApplyError};
 pub use git::{HeadTree, Repo};
-pub use staging::{Interrupted, Staging};
 pub use plan::{Action, Plan, PlanRow, RefuseReason, State, TreeSource};
-pub use resolve::{Reclassification, Resolutions, Resolved, ResolveError};
-pub use rollback::{RestoreAction, RollbackPlan, RollbackError};
-pub use uninstall::{UninstallAction, UninstallPlan, UninstallError};
-pub use upgrade::{Endpoint, UpgradeLine, UpgradeError};
+pub use resolve::{Reclassification, Resolutions, ResolveError, Resolved};
+pub use rollback::{RestoreAction, RollbackError, RollbackPlan};
+pub use staging::{Interrupted, Staging};
+pub use uninstall::{UninstallAction, UninstallError, UninstallPlan};
+pub use upgrade::{Endpoint, UpgradeError, UpgradeLine};

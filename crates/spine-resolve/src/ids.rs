@@ -272,10 +272,7 @@ pub fn check_ambiguous_test_class<'a>(
             continue;
         };
         let target = id.split('.').next().unwrap_or("");
-        if let Some((other_target, _)) = seen
-            .iter()
-            .find(|(t, p)| *p == pair && *t != target)
-        {
+        if let Some((other_target, _)) = seen.iter().find(|(t, p)| *p == pair && *t != target) {
             let _ = other_target;
             return Err(IdError::AmbiguousTestClass {
                 class_path: pair.0.to_string(),
@@ -423,13 +420,13 @@ mod tests {
                 "tests/test_totals.py::test_tax",
             ),
             // "the parametrization suffix begins at the **first** `[`"
-            (
-                "tests/t.py::test_x[a[b]]",
-                "tests/t.py::test_x",
-            ),
+            ("tests/t.py::test_x[a[b]]", "tests/t.py::test_x"),
             // "and exists only if the component's last byte is `]`"
             ("tests/t.py::test_x[a]b", "tests/t.py::test_x[a]b"),
-            ("tests/t.py::TestClass::test_x", "tests/t.py::TestClass::test_x"),
+            (
+                "tests/t.py::TestClass::test_x",
+                "tests/t.py::TestClass::test_x",
+            ),
             ("tests/t.py::test_x", "tests/t.py::test_x"),
             // A `[` in an earlier component belongs to no suffix: only the
             // final component is inspected.
@@ -708,7 +705,10 @@ mod tests {
         // "with a leading `test` removed if present": `testAC1TotalsIncludeTax`
         // gives `AC1TotalsIncludeTax`, "in which `AC1` is at the field's start".
         assert_eq!(
-            sugar_field(Runner::SwiftTest, "Billing.InvoiceTests/testAC1TotalsIncludeTax"),
+            sugar_field(
+                Runner::SwiftTest,
+                "Billing.InvoiceTests/testAC1TotalsIncludeTax"
+            ),
             "AC1TotalsIncludeTax"
         );
         assert_eq!(

@@ -44,13 +44,7 @@ fn without_member(value: &Value, name: &str) -> Value {
     let Value::Obj(members) = value else {
         panic!("not an object")
     };
-    Value::Obj(
-        members
-            .iter()
-            .filter(|(k, _)| k != name)
-            .cloned()
-            .collect(),
-    )
+    Value::Obj(members.iter().filter(|(k, _)| k != name).cloned().collect())
 }
 
 /// `A` — the manifest at `<sha>`, built by applying §8.6's delta table to
@@ -64,8 +58,7 @@ fn without_member(value: &Value, name: &str) -> Value {
 fn ancestor() -> Manifest {
     let dist_hash = spine_canon::sha256_prefixed(b"spine-1.3.0-artifacts");
     assert_eq!(
-        dist_hash,
-        "sha256:1bcc0dea652db94e6e3ca7c79455cd3e89292f7ffa14c85aa21d620a14579ea7",
+        dist_hash, "sha256:1bcc0dea652db94e6e3ca7c79455cd3e89292f7ffa14c85aa21d620a14579ea7",
         "§8.6's printed stand-in, recomputed from the 21 bytes it names"
     );
     assert_eq!(b"spine-1.3.0-artifacts".len(), 21);
@@ -109,36 +102,34 @@ fn ancestor() -> Manifest {
     let files = Value::Arr(
         files
             .into_iter()
-            .map(|record| {
-                match record.get("path").and_then(Value::as_str) {
-                    Some(".github/workflows/spine-collect.yml") => {
-                        let r = with_member(
-                            &record,
-                            "blob",
-                            Value::Str("081136631faa5fca86793d3b940b5bd83952c55a".into()),
-                        );
-                        with_member(&r, "template", Value::Str("ci-github-collect@3".into()))
-                    }
-                    Some(".github/workflows/spine-land.yml") => {
-                        let r = without_member(&record, "base");
-                        let r = with_member(
-                            &r,
-                            "blob",
-                            Value::Str("1e27a99f6888d22c1dcc129d8ef9915ea7d0fb4f".into()),
-                        );
-                        let r = with_member(&r, "owner", Value::Str("spine-owned".into()));
-                        with_member(&r, "template", Value::Str("ci-github-land@3".into()))
-                    }
-                    Some(".spine/ci.sh") => {
-                        let r = with_member(
-                            &record,
-                            "blob",
-                            Value::Str("d61e31f1a8d0130fb53241f89296ea89c2288677".into()),
-                        );
-                        with_member(&r, "template", Value::Str("ci-generic@3".into()))
-                    }
-                    _ => record,
+            .map(|record| match record.get("path").and_then(Value::as_str) {
+                Some(".github/workflows/spine-collect.yml") => {
+                    let r = with_member(
+                        &record,
+                        "blob",
+                        Value::Str("081136631faa5fca86793d3b940b5bd83952c55a".into()),
+                    );
+                    with_member(&r, "template", Value::Str("ci-github-collect@3".into()))
                 }
+                Some(".github/workflows/spine-land.yml") => {
+                    let r = without_member(&record, "base");
+                    let r = with_member(
+                        &r,
+                        "blob",
+                        Value::Str("1e27a99f6888d22c1dcc129d8ef9915ea7d0fb4f".into()),
+                    );
+                    let r = with_member(&r, "owner", Value::Str("spine-owned".into()));
+                    with_member(&r, "template", Value::Str("ci-github-land@3".into()))
+                }
+                Some(".spine/ci.sh") => {
+                    let r = with_member(
+                        &record,
+                        "blob",
+                        Value::Str("d61e31f1a8d0130fb53241f89296ea89c2288677".into()),
+                    );
+                    with_member(&r, "template", Value::Str("ci-generic@3".into()))
+                }
+                _ => record,
             })
             .collect(),
     );
@@ -266,7 +257,10 @@ fn the_rollback_manifest_is_a_whole_and_not_a_field_by_field_copy() {
         "eq(M_T with paths removed, A with paths removed)"
     );
     // Including the ones a field-by-field copy would have missed.
-    assert_eq!(rolled.resign_version("intent"), ancestor.resign_version("intent"));
+    assert_eq!(
+        rolled.resign_version("intent"),
+        ancestor.resign_version("intent")
+    );
     assert_eq!(rolled.repo(), ancestor.repo());
     assert_eq!(rolled.cli_version(), "1.3.0");
 }

@@ -163,7 +163,11 @@ pub fn run(options: &Init) -> Result<u8> {
     // without it the seed is omitted rather than invented — `.spine/
     // allowed_signers` is `user-owned`, seeded once and never touched again.
     if let Some(path) = &options.signer_key {
-        match seed_keyring(path, options.identity.as_deref(), options.pipeline_key.as_deref()) {
+        match seed_keyring(
+            path,
+            options.identity.as_deref(),
+            options.pipeline_key.as_deref(),
+        ) {
             Ok(bytes) => desired.push(Desired {
                 path: ".spine/allowed_signers".into(),
                 owner: Owner::UserOwned,
@@ -255,16 +259,14 @@ pub fn run(options: &Init) -> Result<u8> {
                 // Read from HEAD and not the working tree, for the reason the
                 // rest of the plan is: an uncommitted manifest is not what the
                 // last completed run landed.
-                let previous = tree
-                    .read(".spine/manifest.json")
-                    .and_then(|bytes| {
-                        spine_manifest::Manifest::parse(&bytes, Some(format_of(&repo))).ok()
-                    });
+                let previous = tree.read(".spine/manifest.json").and_then(|bytes| {
+                    spine_manifest::Manifest::parse(&bytes, Some(format_of(&repo))).ok()
+                });
                 plan::compute(&tree, &desired, previous.as_ref(), &|name| {
                     template_version(name)
                 })
             }
-        },
+        }
     };
 
     print_plan(&plan, options.status);
@@ -480,14 +482,12 @@ fn seed_keyring(
     use spine_template::keyring_seed::{Role, enrol, read_public_key, render_seed};
 
     let read = |path: &str| -> std::result::Result<_, String> {
-        let text = std::fs::read_to_string(path)
-            .map_err(|e| format!("cannot read {path}: {e}"))?;
+        let text = std::fs::read_to_string(path).map_err(|e| format!("cannot read {path}: {e}"))?;
         read_public_key(&text).map_err(|e| format!("{path}: {e}"))
     };
 
-    let mut entries = vec![
-        enrol(read(signer_key)?, identity, Role::Human).map_err(|e| e.to_string())?,
-    ];
+    let mut entries =
+        vec![enrol(read(signer_key)?, identity, Role::Human).map_err(|e| e.to_string())?];
     if let Some(path) = pipeline_key {
         // The pipeline key takes no `--identity`: that flag names the operator,
         // and the seal principal is the trusted stage's.

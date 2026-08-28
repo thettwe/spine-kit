@@ -186,8 +186,13 @@ mod tests {
         let mut host_with_tail = host.clone();
         host_with_tail.extend_from_slice(b"below\n");
 
-        let replaced =
-            replace_in(&host_with_tail, "gitignore", 1, ".spine/cache/\n.spine/tmp/\n").unwrap();
+        let replaced = replace_in(
+            &host_with_tail,
+            "gitignore",
+            1,
+            ".spine/cache/\n.spine/tmp/\n",
+        )
+        .unwrap();
         let text = String::from_utf8(replaced.clone()).unwrap();
 
         assert!(text.starts_with("above\n"));

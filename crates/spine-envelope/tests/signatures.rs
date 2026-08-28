@@ -56,9 +56,9 @@ fn check(message: &[u8], keyring: &[u8], name: TrailerName, principal: &str, ns:
                 "PB §7.2 compares fingerprints, so one must come back"
             );
         }
-        Err(VerifyError::OpenSshUnavailable(e)) => panic!(
-            "PB §11's Git requirements make OpenSSH >= 8.2 a prerequisite: {e}"
-        ),
+        Err(VerifyError::OpenSshUnavailable(e)) => {
+            panic!("PB §11's Git requirements make OpenSSH >= 8.2 a prerequisite: {e}")
+        }
         Err(e) => panic!("{name} did not verify: {e}"),
     }
 }
@@ -66,18 +66,54 @@ fn check(message: &[u8], keyring: &[u8], name: TrailerName, principal: &str, ns:
 #[test]
 fn vector_a_all_five_signatures_verify() {
     // EV §8.6's five `verify` invocations, one for one.
-    check(A_MESSAGE, TEAM_KEYRING, TrailerName::Signoff, "alice@example.com", Namespace::Signoff);
-    check(A_MESSAGE, TEAM_KEYRING, TrailerName::Reopen, "alice@example.com", Namespace::Signoff);
-    check(A_MESSAGE, TEAM_KEYRING, TrailerName::Approve, "alice@example.com", Namespace::Review);
-    check(A_MESSAGE, TEAM_KEYRING, TrailerName::Review, "bob@example.com", Namespace::Review);
-    check(A_MESSAGE, TEAM_KEYRING, TrailerName::Seal, "ci@example.com", Namespace::Seal);
+    check(
+        A_MESSAGE,
+        TEAM_KEYRING,
+        TrailerName::Signoff,
+        "alice@example.com",
+        Namespace::Signoff,
+    );
+    check(
+        A_MESSAGE,
+        TEAM_KEYRING,
+        TrailerName::Reopen,
+        "alice@example.com",
+        Namespace::Signoff,
+    );
+    check(
+        A_MESSAGE,
+        TEAM_KEYRING,
+        TrailerName::Approve,
+        "alice@example.com",
+        Namespace::Review,
+    );
+    check(
+        A_MESSAGE,
+        TEAM_KEYRING,
+        TrailerName::Review,
+        "bob@example.com",
+        Namespace::Review,
+    );
+    check(
+        A_MESSAGE,
+        TEAM_KEYRING,
+        TrailerName::Seal,
+        "ci@example.com",
+        Namespace::Seal,
+    );
 }
 
 #[test]
 fn the_approval_commits_own_approve_line_verifies() {
     // EV §8.2: "the `Spine-Approve` line here is the line copied verbatim into
     // the envelope", so the same signature must verify on both commits.
-    check(A_APPROVAL, TEAM_KEYRING, TrailerName::Approve, "alice@example.com", Namespace::Review);
+    check(
+        A_APPROVAL,
+        TEAM_KEYRING,
+        TrailerName::Approve,
+        "alice@example.com",
+        Namespace::Review,
+    );
     let (from_approval, sig_a) = statement(A_APPROVAL, TrailerName::Approve);
     let (from_landing, sig_l) = statement(A_MESSAGE, TrailerName::Approve);
     assert_eq!(from_approval, from_landing, "copied verbatim");
@@ -88,15 +124,33 @@ fn the_approval_commits_own_approve_line_verifies() {
 fn vector_b_both_signatures_verify_against_the_solo_keyring() {
     // EV §9: solo mode, "one signoff key, whose principal then holds all three
     // namespaces (PB §11)".
-    check(B_MESSAGE, SOLO_KEYRING, TrailerName::Review, "alice@example.com", Namespace::Review);
-    check(B_MESSAGE, SOLO_KEYRING, TrailerName::Seal, "alice@example.com", Namespace::Seal);
+    check(
+        B_MESSAGE,
+        SOLO_KEYRING,
+        TrailerName::Review,
+        "alice@example.com",
+        Namespace::Review,
+    );
+    check(
+        B_MESSAGE,
+        SOLO_KEYRING,
+        TrailerName::Seal,
+        "alice@example.com",
+        Namespace::Seal,
+    );
 }
 
 #[test]
 fn vector_ds_reseal_of_the_same_landing_verifies() {
     // EV §11: the seal was "resealed over the new digest", so it is a different
     // line and a different signature from vector A's.
-    check(D_MESSAGE, TEAM_KEYRING, TrailerName::Seal, "ci@example.com", Namespace::Seal);
+    check(
+        D_MESSAGE,
+        TEAM_KEYRING,
+        TrailerName::Seal,
+        "ci@example.com",
+        Namespace::Seal,
+    );
     assert_ne!(
         statement(D_MESSAGE, TrailerName::Seal).1,
         statement(A_MESSAGE, TrailerName::Seal).1
@@ -111,7 +165,14 @@ fn the_signed_range_includes_the_trailer_name() {
     let (line, sig) = statement(A_MESSAGE, TrailerName::Signoff);
     let payload = parse_line(line).unwrap().payload;
     assert!(
-        verify_line(payload, &sig, "alice@example.com", Namespace::Signoff, TEAM_KEYRING).is_err()
+        verify_line(
+            payload,
+            &sig,
+            "alice@example.com",
+            Namespace::Signoff,
+            TEAM_KEYRING
+        )
+        .is_err()
     );
 }
 
@@ -122,7 +183,14 @@ fn a_signature_does_not_verify_under_another_namespace() {
     // claim in the trailer".
     let (line, sig) = statement(A_MESSAGE, TrailerName::Seal);
     assert!(
-        verify_line(line, &sig, "ci@example.com", Namespace::Review, TEAM_KEYRING).is_err(),
+        verify_line(
+            line,
+            &sig,
+            "ci@example.com",
+            Namespace::Review,
+            TEAM_KEYRING
+        )
+        .is_err(),
         "ci@example.com holds spine-seal@v1 alone"
     );
 }
@@ -131,7 +199,14 @@ fn a_signature_does_not_verify_under_another_namespace() {
 fn a_signature_does_not_verify_for_another_principal() {
     let (line, sig) = statement(A_MESSAGE, TrailerName::Review);
     assert!(
-        verify_line(line, &sig, "alice@example.com", Namespace::Review, TEAM_KEYRING).is_err(),
+        verify_line(
+            line,
+            &sig,
+            "alice@example.com",
+            Namespace::Review,
+            TEAM_KEYRING
+        )
+        .is_err(),
         "bob signed it; PB §7.2's team mode binds reviewer != signer on fingerprints"
     );
 }
@@ -145,8 +220,14 @@ fn one_edited_byte_breaks_the_signature() {
     let n = tampered.len();
     tampered[n - 1] = b'M';
     assert!(
-        verify_line(&tampered, &sig, "alice@example.com", Namespace::Signoff, TEAM_KEYRING)
-            .is_err()
+        verify_line(
+            &tampered,
+            &sig,
+            "alice@example.com",
+            Namespace::Signoff,
+            TEAM_KEYRING
+        )
+        .is_err()
     );
 }
 

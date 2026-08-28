@@ -431,7 +431,7 @@ pub(crate) mod build {
             // warns about. Re-measured from a `sysfs` mounted inside the
             // namespace: `lo flags=0x8 operstate=down`.
             ("lo", 0x8),
-            ("tunl0", 0x80),  // IFF_NOARP, down
+            ("tunl0", 0x80), // IFF_NOARP, down
             ("gre0", 0x80),
             ("gretap0", 0x1002), // IFF_BROADCAST | IFF_MULTICAST, down
             ("erspan0", 0x1002),
@@ -474,7 +474,7 @@ pub(crate) mod build {
     /// The nine devices the kernel instantiates in every new network namespace
     /// where the `ipip`, `gre`, `sit` and `ip6_tunnel` modules are loaded.
     const FRESH_TUNNEL_DEVICES: [(&str, u32); 9] = [
-        ("tunl0", 0x80),     // IFF_NOARP, down
+        ("tunl0", 0x80), // IFF_NOARP, down
         ("gre0", 0x80),
         ("gretap0", 0x1002), // IFF_BROADCAST | IFF_MULTICAST, down
         ("erspan0", 0x1002),

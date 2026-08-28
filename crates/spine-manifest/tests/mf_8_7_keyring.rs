@@ -37,11 +37,7 @@ fn the_published_keyring_is_411_bytes_with_the_published_blob() {
 #[test]
 fn it_lints_clean_in_team_mode() {
     let k = Keyring::parse(KEYRING.as_bytes());
-    assert!(
-        k.is_clean(),
-        "expected a clean lint, got {:?}",
-        k.findings
-    );
+    assert!(k.is_clean(), "expected a clean lint, got {:?}", k.findings);
     assert_eq!(k.entries.len(), 3);
     assert_eq!(k.mode, Mode::Team);
 }
@@ -55,7 +51,10 @@ fn the_fingerprints_are_the_published_ones() {
     let fingerprints: Vec<&str> = k.entries.iter().map(|e| e.fingerprint.as_str()).collect();
     assert_eq!(fingerprints, vec![ALICE_FP, BOB_FP, CI_FP]);
 
-    assert_eq!(k.by_fingerprint(ALICE_FP).unwrap().principal, "alice@example.com");
+    assert_eq!(
+        k.by_fingerprint(ALICE_FP).unwrap().principal,
+        "alice@example.com"
+    );
     assert_eq!(
         k.fingerprints_under("spine-signoff@v1"),
         {
@@ -123,28 +122,45 @@ fn the_option_lints_each_have_their_own_token() {
     // MF §4.2's `entry` production admits none of these lines, yet §4.4 gives
     // each a distinct status — which is why the parser field-splits first and
     // classifies second.
-    let no_ns = format!("dave@example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMb068SxqsLNkSdlCVXeIPOcHOPCh/TemT4tv9iJnqla\n{BOB}\n{CI}");
+    let no_ns = format!(
+        "dave@example.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIMb068SxqsLNkSdlCVXeIPOcHOPCh/TemT4tv9iJnqla\n{BOB}\n{CI}"
+    );
     assert!(lints(&no_ns).contains(&Lint::KeyringNoNamespaces));
 
-    let empty = format!("{}\n{BOB}\n{CI}", ALICE.replace(
-        "namespaces=\"spine-signoff@v1,spine-review@v1\"",
-        "namespaces=\"\"",
-    ));
+    let empty = format!(
+        "{}\n{BOB}\n{CI}",
+        ALICE.replace(
+            "namespaces=\"spine-signoff@v1,spine-review@v1\"",
+            "namespaces=\"\"",
+        )
+    );
     assert!(lints(&empty).contains(&Lint::KeyringNamespaceEmpty));
 
     // A typo "silently removes a signer's authority while leaving the line
     // looking correct" — so it is refused, never ignored.
-    let typo = format!("{}\n{BOB}\n{CI}", ALICE.replace("spine-signoff@v1", "spine-signof@v1"));
+    let typo = format!(
+        "{}\n{BOB}\n{CI}",
+        ALICE.replace("spine-signoff@v1", "spine-signof@v1")
+    );
     assert!(lints(&typo).contains(&Lint::KeyringNamespaceUnknown));
 
-    let ca = format!("{}\n{BOB}\n{CI}", ALICE.replace("namespaces=", "cert-authority,namespaces="));
+    let ca = format!(
+        "{}\n{BOB}\n{CI}",
+        ALICE.replace("namespaces=", "cert-authority,namespaces=")
+    );
     assert!(lints(&ca).contains(&Lint::KeyringCertAuthority));
 
     // MF §4.6: "Both are commits, not times — the chain is the clock."
-    let validity = format!("{}\n{BOB}\n{CI}", ALICE.replace("namespaces=", "valid-after=20260101,namespaces="));
+    let validity = format!(
+        "{}\n{BOB}\n{CI}",
+        ALICE.replace("namespaces=", "valid-after=20260101,namespaces=")
+    );
     assert!(lints(&validity).contains(&Lint::KeyringValidityOption));
 
-    let unknown = format!("{}\n{BOB}\n{CI}", ALICE.replace("namespaces=", "agent-forwarding,namespaces="));
+    let unknown = format!(
+        "{}\n{BOB}\n{CI}",
+        ALICE.replace("namespaces=", "agent-forwarding,namespaces=")
+    );
     assert!(lints(&unknown).contains(&Lint::KeyringOptionUnknown));
 
     // MF §4.2: `ssh-rsa` is absent from the keytype list because OpenSSH 8.2
@@ -153,7 +169,10 @@ fn the_option_lints_each_have_their_own_token() {
     assert!(lints(&rsa).contains(&Lint::KeyringKeytypeUnknown));
 
     // MF §4.2 R12: one entry, one principal.
-    let multi = format!("{}\n{BOB}\n{CI}", ALICE.replace("alice@example.com", "alice@example.com,alias@example.com"));
+    let multi = format!(
+        "{}\n{BOB}\n{CI}",
+        ALICE.replace("alice@example.com", "alice@example.com,alias@example.com")
+    );
     assert!(lints(&multi).contains(&Lint::KeyringMultiPrincipal));
 }
 
@@ -203,7 +222,10 @@ fn the_seal_lints_are_team_only_and_bidirectional() {
     // Team, seal key also holding a human namespace.
     let mixed = format!(
         "{ALICE}\n{BOB}\n{}",
-        CI.replace("namespaces=\"spine-seal@v1\"", "namespaces=\"spine-review@v1,spine-seal@v1\"")
+        CI.replace(
+            "namespaces=\"spine-seal@v1\"",
+            "namespaces=\"spine-review@v1,spine-seal@v1\""
+        )
     );
     let k = Keyring::parse(mixed.as_bytes());
     assert_eq!(k.mode, Mode::Team);

@@ -38,7 +38,10 @@ fn ci_5_3_line_count_and_both_digests() {
 #[test]
 fn framing_is_what_a_posix_shell_needs() {
     assert!(CI_SH.starts_with(b"#!"), "a shebang");
-    assert!(!CI_SH.contains(&b'\r'), "no CR — .gitattributes pins eol=lf");
+    assert!(
+        !CI_SH.contains(&b'\r'),
+        "no CR — .gitattributes pins eol=lf"
+    );
     assert!(CI_SH.ends_with(b"\n"), "a final newline");
     assert!(
         core::str::from_utf8(CI_SH).is_ok(),
@@ -125,7 +128,9 @@ fn the_umask_narrowing_is_in_these_bytes() {
         "the mode that made profile=container unlicensable on every host"
     );
     assert!(
-        directives.iter().any(|l| l.starts_with("chmod 0700 \"$WORK\"")),
+        directives
+            .iter()
+            .any(|l| l.starts_with("chmod 0700 \"$WORK\"")),
         "and the explicit tightening of $WORK that replaced it"
     );
     assert!(
@@ -145,7 +150,12 @@ fn the_registry_allowlist_carries_no_dead_kotlin_hosts() {
         assert!(!text.contains(dead), "{dead} was removed with Kotlin");
     }
     // The three v1 registries that have a host.
-    for live in ["pypi.org", "files.pythonhosted.org", "registry.npmjs.org", "pub.dev"] {
+    for live in [
+        "pypi.org",
+        "files.pythonhosted.org",
+        "registry.npmjs.org",
+        "pub.dev",
+    ] {
         assert!(text.contains(live), "{live} is a v1 registry host");
     }
 }

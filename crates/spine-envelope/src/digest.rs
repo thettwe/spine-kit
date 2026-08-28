@@ -268,7 +268,10 @@ mod tests {
 
     #[test]
     fn shorter_is_smaller_on_a_prefix_tie() {
-        assert_eq!(freeze_cmp(b"Spine-Test: a", b"Spine-Test: ab"), Ordering::Less);
+        assert_eq!(
+            freeze_cmp(b"Spine-Test: a", b"Spine-Test: ab"),
+            Ordering::Less
+        );
     }
 
     #[test]

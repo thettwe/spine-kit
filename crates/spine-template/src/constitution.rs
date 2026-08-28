@@ -91,7 +91,10 @@ pub fn render(seed: &Seed<'_>) -> String {
 
     out.push_str(
         &RULES_BLOCK
-            .replace("C-T1: test.roots = <per §6.4>", &format!("C-T1: test.roots = {c_t1}"))
+            .replace(
+                "C-T1: test.roots = <per §6.4>",
+                &format!("C-T1: test.roots = {c_t1}"),
+            )
             .replace(
                 "C-T2: test.support = <per §6.4>",
                 &format!("C-T2: test.support = {c_t2}"),
