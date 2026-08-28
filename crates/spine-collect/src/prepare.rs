@@ -42,6 +42,77 @@ pub trait Git {
     /// trusted stage's business at step 1 of PB §5.4, which "detects
     /// `needs-rebase` independently … and does not need a file to do it".
     fn merge_tree(&self, base: &str, head: &str) -> Option<String>;
+
+    /// First-parent commit messages from `rev`, newest first — the walk a
+    /// reseal's `base=` is found on. Empty where `rev` does not resolve.
+    fn first_parent_messages(&self, rev: &str) -> Vec<(String, String)>;
+}
+
+/// PB §5.5's reseal, which reads policy from somewhere other than trunk's tip.
+///
+/// > "a **reseal** is a quick-lane landing with `Spine-Event: reseal`, parent =
+/// > the orphan tip `O`, tree identical to `O`'s, seal `base=` **the last valid
+/// > landing below the range** and `head=O`"
+///
+/// RF §4.2's `base` row: "`origin/<trunk>` tip at the moment the collector read
+/// policy — **for a reseal, the seal's `base=`, from which every policy read for
+/// a reseal is taken**", and RF §8.6 adds "**`params.langs` and `params.timeout`
+/// included**".
+///
+/// **Why it cannot be skipped.** On `refs/heads/quick/reseal-<O>`, trunk's tip
+/// *is* the orphan — G9 refuses every landing above an orphan until the reseal
+/// lands. A collector that resolved `origin/<trunk>` would seal `base=<O>`,
+/// read `params.langs`, `params.timeout` and the pin from `O`'s manifest, and
+/// verify its own bytes against `O`'s pin. The trusted stage fixed
+/// `(T, B) = (tree(O), the seal's base=)`, so RF §8.3 step 1 answers
+/// `base-moved` — and this is the one landing shape that can never clear it:
+/// "its tree must equal `O`'s, so there is no candidate to fix, and a reseal is
+/// not promotable by `spine new --from`", while trunk cannot move while the
+/// orphan stands. The repository is bricked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Subject<'a> {
+    /// Every other shape: policy is `origin/<trunk>`'s (PB §7.4 rule 1).
+    Trunk,
+    /// A reseal of the orphan tip named by the branch, `quick/reseal-<O>`.
+    Reseal { orphan: &'a str },
+}
+
+/// CI §6.4's router matches `quick/reseal-*` **before** `quick/*`, and names
+/// the orphan in the ref: "PB §5.5 puts a reseal's review commits on
+/// `refs/heads/quick/reseal-<O>`".
+pub fn subject_of(head_ref: &str) -> Subject<'_> {
+    let name = head_ref.strip_prefix("refs/heads/").unwrap_or(head_ref);
+    match name.strip_prefix("quick/reseal-") {
+        Some(orphan) if !orphan.is_empty() => Subject::Reseal { orphan },
+        _ => Subject::Trunk,
+    }
+}
+
+/// PB §5.5's "the last valid landing below the range", as far as a collector
+/// can see it.
+///
+/// **DERIVED, and the derivation is an approximation the corpus does not
+/// bound.** "Valid landing" is G9's predicate — a verifying seal, a recomputing
+/// `envelope=`, a fenced `blob=` that hashes — and the collector holds no
+/// keyring and no envelope verifier: PB §7.4 rule 3 gives it git objects and
+/// policy and nothing else. So this takes the newest first-parent commit
+/// carrying a `Spine-Seal` **trailer**, which is the syntactic half of the
+/// predicate.
+///
+/// Where the two differ — an orphan carrying a forged seal line — the collector
+/// writes a `base=` the trusted stage disagrees with and RF §8.3 step 1 answers
+/// `base-moved`, which is the retryable outcome rather than a wrong file. That
+/// is the right direction to be wrong in, and it is recorded in
+/// `.build-notes/OPEN-questions.md`: the corpus fixes what `base=` **is** and
+/// never says how the collector, which cannot verify, is to find it.
+pub fn reseal_base(git: &dyn Git, orphan: &str) -> Option<String> {
+    git.first_parent_messages(orphan)
+        .into_iter()
+        // The orphan itself is by definition "neither a landing nor the trust
+        // root", so the walk starts below it.
+        .skip(1)
+        .find(|(_, message)| message.lines().any(|line| line.starts_with("Spine-Seal: ")))
+        .map(|(sha, _)| sha)
 }
 
 /// Where the collector's own bytes stand against the pinned artifact list.
@@ -106,9 +177,14 @@ pub enum PrepareError {
     TrunkUnresolvable(String),
     /// `H` does not resolve.
     HeadUnresolvable(String),
-    /// No `.spine/manifest.json` on trunk — the repository is not initialised,
-    /// or the collector was pointed at the wrong ref.
+    /// No `.spine/manifest.json` where policy is read from.
     NoManifestOnTrunk,
+    /// `quick/reseal-<O>` names an `<O>` this repository does not have.
+    OrphanUnresolvable(String),
+    /// PB §5.5's "the last valid landing below the range" is not there: the
+    /// first-parent walk below the orphan carries no `Spine-Seal` at all, so
+    /// there is nothing for a reseal's `base=` to name.
+    NoLandingBelowTheOrphan,
     /// Trunk's manifest does not parse. The token is MF §3.11's.
     TrunkManifestMalformed(String),
     /// One of RF §7.1's own five.
@@ -121,7 +197,13 @@ impl core::fmt::Display for PrepareError {
             PrepareError::TrunkUnresolvable(r) => write!(f, "{r} does not resolve"),
             PrepareError::HeadUnresolvable(r) => write!(f, "{r} does not resolve"),
             PrepareError::NoManifestOnTrunk => f.write_str(
-                "no .spine/manifest.json on trunk: policy is read from there and nowhere else",
+                "no .spine/manifest.json where policy is read from: trunk's tip, or a reseal's base=",
+            ),
+            PrepareError::OrphanUnresolvable(o) => {
+                write!(f, "quick/reseal-{o} names an orphan this repository does not have")
+            }
+            PrepareError::NoLandingBelowTheOrphan => f.write_str(
+                "no Spine-Seal below the orphan: a reseal's base= is the last valid landing                  below the range, and there is none",
             ),
             PrepareError::TrunkManifestMalformed(t) => write!(f, "trunk's manifest: {t}"),
             PrepareError::Refused(r) => write!(f, "{r}"),
@@ -159,8 +241,14 @@ pub struct Collector<'a> {
     pub mode: Mode,
     /// Step 2's verdict, performed by the caller (see [`SelfBytes`]).
     pub self_bytes: SelfBytes,
-    /// Step 4's probe, performed by the caller.
-    pub keys_visible: bool,
+    /// Step 4's probe, performed by the caller — [`crate::keys::probe`] or
+    /// [`crate::keys::probe_this_process`], never a literal.
+    ///
+    /// RF §4.2 makes it a predicate over "the collector process **or** any
+    /// process group it spawned", and the whole job gets one answer: "the field
+    /// is not per-runner, and a collector that strips key material for one
+    /// runner and not another writes `true`."
+    pub keys: crate::keys::Probe,
     pub identity: &'a SelfIdentity,
 }
 
@@ -182,13 +270,24 @@ pub fn prepare(
     me: &Collector<'_>,
     release: &dyn Release,
 ) -> Result<Prepared, PrepareError> {
-    // ---- Step 1: policy, from `origin/<trunk>`, never from the checkout.
-    let base = git
-        .rev_parse(refs.trunk)
-        .ok_or_else(|| PrepareError::TrunkUnresolvable(refs.trunk.to_string()))?;
+    // ---- Step 1: policy, from `origin/<trunk>`, never from the checkout —
+    // **except on a reseal**, where RF §4.2 and §8.6 send every policy read to
+    // the seal's `base=` instead. See [`Subject`] for why skipping it bricks
+    // the repository.
     let head = git
         .rev_parse(refs.head)
         .ok_or_else(|| PrepareError::HeadUnresolvable(refs.head.to_string()))?;
+    let base = match subject_of(refs.head) {
+        Subject::Trunk => git
+            .rev_parse(refs.trunk)
+            .ok_or_else(|| PrepareError::TrunkUnresolvable(refs.trunk.to_string()))?,
+        Subject::Reseal { orphan } => {
+            let orphan = git
+                .rev_parse(orphan)
+                .ok_or_else(|| PrepareError::OrphanUnresolvable(orphan.to_string()))?;
+            reseal_base(git, &orphan).ok_or(PrepareError::NoLandingBelowTheOrphan)?
+        }
+    };
 
     let bytes = git
         .blob_at(&base, MANIFEST_PATH)
@@ -218,7 +317,7 @@ pub fn prepare(
             tree,
             base,
             tool: me.identity.tool_token(),
-            keys_visible: me.keys_visible,
+            keys_visible: me.keys.keys_visible(),
         },
         invocation,
         policy,

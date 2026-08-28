@@ -43,6 +43,7 @@
 pub mod collector;
 pub mod file;
 pub mod header;
+pub mod keys;
 pub mod malformed;
 pub mod outcome;
 pub mod prepare;
@@ -55,6 +56,7 @@ pub use collector::{
 };
 pub use file::ResultFile;
 pub use header::{Header, Profile, Provenance};
+pub use keys::{KeyMaterial, Probe as KeyProbe};
 pub use malformed::{Malformed, Section};
 pub use outcome::{BaseOutcome, Outcome};
 pub use prepare::{Collector, Git, PrepareError, Prepared, Refs, SelfBytes, SelfIdentity, prepare};

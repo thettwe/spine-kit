@@ -199,3 +199,34 @@ session-end event, so for two of the four shipped languages the status
 that finished from one that died part-way.
 
 **The fix is two sentences**, one in §11.2 and one in §11.3.
+
+## 9 · How does the *collector* find a reseal's `base=`, holding no keyring?
+
+**Where.** PB §5.5: a reseal's seal `base=` is *"the last valid landing below
+the range"*. RF §4.2's `base` row: *"for a reseal, the seal's `base=`, from
+which every policy read for a reseal is taken"*, and RF §8.6 adds *"`params.langs`
+and `params.timeout` included"*.
+
+**The gap.** "Valid landing" is G9's predicate — a verifying seal, a
+recomputing `envelope=`, a fenced `blob=` that hashes — and the collector holds
+none of the machinery. PB §7.4 rule 3 gives it git objects and policy and
+nothing else: it "executes no repository code", holds no keyring, and does no
+envelope verification. The corpus fixes what `base=` **is** and never says how
+the one process that must write it is to find it.
+
+**What the implementation does.** `crates/spine-collect/src/prepare.rs`,
+`reseal_base`: the newest first-parent commit below the orphan carrying a
+`Spine-Seal` **trailer** — the syntactic half of G9's predicate. Marked DERIVED
+at the function.
+
+**Why it is safe to leave open.** Where the syntactic answer differs from G9's
+— an orphan range containing a commit with a forged seal line — the collector
+writes a `base=` the trusted stage disagrees with, and RF §8.3 step 1 answers
+`base-moved`. That is the retryable outcome, not a wrong file ingested, and it
+is the direction to be wrong in.
+
+**Two candidate fixes**, both one clause. Either say the collector takes the
+syntactic reading and that a disagreement is `base-moved` by design; or have
+`.spine/ci.sh` pass the trusted stage's `B` to the collector, which the
+invocation contract (CI §5.1, digest-pinned) does not currently do — and which
+would also close the `T`-computed-twice skew this document's neighbours note.

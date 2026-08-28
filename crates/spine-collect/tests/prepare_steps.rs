@@ -10,10 +10,19 @@
 //! outcomes are refusals rather than statuses.
 
 use spine_collect::collector::{Mode, Refusal, Release};
+use spine_collect::keys::{KeyMaterial, Probe as KeyProbe};
 use spine_collect::prepare::{
-    Collector, Git, MANIFEST_PATH, PrepareError, Refs, SelfBytes, SelfIdentity, prepare,
+    Collector, Git, MANIFEST_PATH, PrepareError, Refs, SelfBytes, SelfIdentity, Subject, prepare,
+    subject_of,
 };
 use spine_collect::record::RunnerToken;
+
+/// A step-4 probe that found the operator's ssh-agent — RF §4.2's solo answer.
+fn keys_reachable() -> KeyProbe {
+    KeyProbe {
+        reachable: vec![KeyMaterial::SshAgent],
+    }
+}
 
 const VECTOR: &[u8] = include_bytes!("vectors/mf-8.3-manifest.json");
 const TRUNK: &str = "origin/main";
@@ -28,6 +37,12 @@ struct Fake {
     head_resolves: bool,
     manifest: Option<Vec<u8>>,
     merge_conflicts: bool,
+    /// `(sha, message)` first-parent, newest first — the walk a reseal's
+    /// `base=` is found on.
+    messages: Vec<(String, String)>,
+    /// A manifest served **only** at the reseal's base, so a policy read that
+    /// went to trunk instead finds nothing.
+    manifest_at_reseal_base: Option<Vec<u8>>,
 }
 
 impl Default for Fake {
@@ -37,6 +52,8 @@ impl Default for Fake {
             head_resolves: true,
             manifest: Some(VECTOR.to_vec()),
             merge_conflicts: false,
+            messages: Vec::new(),
+            manifest_at_reseal_base: None,
         }
     }
 }
@@ -46,21 +63,47 @@ impl Git for Fake {
         match rev {
             TRUNK => self.trunk_resolves.then(|| BASE.to_string()),
             HEAD_REF => self.head_resolves.then(|| HEAD.to_string()),
+            // A reseal branch resolves to its orphan tip: PB §5.5 puts the
+            // review commits on `quick/reseal-<O>`, and they change no tree.
+            r if r.starts_with("quick/reseal-") => Some(ORPHAN.to_string()),
+            // Anything already an oid resolves to itself.
+            r if r.len() == 40 && r.bytes().all(|b| b.is_ascii_hexdigit()) => Some(r.to_string()),
             _ => None,
         }
     }
 
     fn blob_at(&self, rev: &str, path: &str) -> Option<Vec<u8>> {
-        // Reading policy from anything but trunk is the failure PB §7.4 rule 1
-        // exists to prevent, so the fake has nothing else to give.
-        (rev == BASE && path == MANIFEST_PATH)
-            .then(|| self.manifest.clone())
-            .flatten()
+        if path != MANIFEST_PATH {
+            return None;
+        }
+        // Reading policy from anything but the commit policy is *supposed* to
+        // come from is the failure PB §7.4 rule 1 exists to prevent, so the
+        // fake serves it at exactly one commit and nothing else.
+        if let Some(bytes) = &self.manifest_at_reseal_base
+            && rev == LAST_LANDING
+        {
+            return Some(bytes.clone());
+        }
+        (rev == BASE).then(|| self.manifest.clone()).flatten()
+    }
+
+    fn first_parent_messages(&self, _rev: &str) -> Vec<(String, String)> {
+        self.messages.clone()
     }
 
     fn merge_tree(&self, base: &str, head: &str) -> Option<String> {
-        assert_eq!(base, BASE, "step 5 merges onto trunk's tip");
-        assert_eq!(head, HEAD, "step 5 merges the candidate's head");
+        // Step 5 merges onto whichever commit policy came from — trunk's tip
+        // ordinarily, and a reseal's `base=` on `quick/reseal-<O>`, where
+        // RF §8.6 makes `merge-tree(base, O) = tree(O)` because `base=` is an
+        // ancestor of `O`.
+        assert!(
+            base == BASE || base == LAST_LANDING,
+            "step 5 merges onto the commit policy came from, got {base}"
+        );
+        assert!(
+            head == HEAD || head == ORPHAN,
+            "step 5 merges the candidate's head, got {head}"
+        );
         (!self.merge_conflicts).then(|| TREE.to_string())
     }
 }
@@ -99,7 +142,7 @@ fn run(git: &Fake, self_bytes: SelfBytes) -> Result<spine_collect::Prepared, Pre
         &Collector {
             mode: Mode::Ci,
             self_bytes,
-            keys_visible: true,
+            keys: keys_reachable(),
             identity: &identity,
         },
         &Shipped,
@@ -152,7 +195,7 @@ fn the_tool_token_is_the_collectors_own_and_never_trunks() {
         &Collector {
             mode: Mode::Ci,
             self_bytes: SelfBytes::Verified,
-            keys_visible: true,
+            keys: keys_reachable(),
             identity: &older,
         },
         &Shipped,
@@ -308,12 +351,187 @@ fn a_uid_request_refuses_under_ci_and_not_outside_it() {
             &Collector {
                 mode: Mode::Solo,
                 self_bytes: SelfBytes::Verified,
-                keys_visible: true,
+                keys: keys_reachable(),
                 identity: &identity,
             },
             &Shipped,
         )
         .is_ok(),
         "a manifest declaring uid costs a solo developer no run"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The reseal, where policy is not trunk's.
+// ---------------------------------------------------------------------------
+
+const ORPHAN: &str = "aa11bb22cc33dd44ee55ff6677889900aabbccdd";
+const LAST_LANDING: &str = "9911772255338844bb00cc11dd22ee33ff445566";
+
+/// CI §6.4's router names the orphan in the ref, and matches `quick/reseal-*`
+/// **before** `quick/*`: "a router that matches `quick/*` first would land a
+/// reseal as an ordinary quick-lane change".
+#[test]
+fn the_ref_says_whether_this_is_a_reseal() {
+    assert_eq!(
+        subject_of(&format!("refs/heads/quick/reseal-{ORPHAN}")),
+        Subject::Reseal { orphan: ORPHAN }
+    );
+    // Unqualified, as `.spine/ci.sh` passes it.
+    assert_eq!(
+        subject_of(&format!("quick/reseal-{ORPHAN}")),
+        Subject::Reseal { orphan: ORPHAN }
+    );
+    // Every other shape reads policy from trunk.
+    for ordinary in [
+        "refs/heads/main",
+        "refs/heads/quick/typo",
+        "refs/heads/intent/INT-42",
+        // A branch merely *named* like one, with nothing after the dash, is
+        // not a reseal: there is no orphan for `base=` to be found below.
+        "refs/heads/quick/reseal-",
+    ] {
+        assert_eq!(subject_of(ordinary), Subject::Trunk, "{ordinary}");
+    }
+}
+
+/// RF §4.2: "for a reseal, the seal's `base=`, from which **every** policy read
+/// for a reseal is taken", and RF §8.6: "**`params.langs` and `params.timeout`
+/// included**".
+///
+/// The failure this prevents is not a wrong field. On `quick/reseal-<O>`
+/// trunk's tip *is* the orphan — G9 refuses every landing above one until the
+/// reseal lands — so a collector reading `origin/<trunk>` seals `base=<O>`,
+/// the trusted stage answers `base-moved`, and the shape can never clear it:
+/// the tree must equal `O`'s so there is no candidate to fix, a reseal is not
+/// promotable by `spine new --from`, and trunk cannot move while the orphan
+/// stands. The repository is bricked.
+#[test]
+fn a_reseal_reads_policy_from_the_last_landing_below_the_orphan() {
+    let head_ref = format!("quick/reseal-{ORPHAN}");
+    // A manifest that exists **only** at the last landing, and whose
+    // `params.timeout` differs from trunk's: RF §8.6 says a reseal reads
+    // "`params.langs` and `params.timeout` included" from there, so a collector
+    // that went to trunk finds no manifest at all.
+    let text = core::str::from_utf8(VECTOR).unwrap();
+    let at_base = text.replace(r#""timeout":1800"#, r#""timeout":900"#);
+    assert_ne!(
+        at_base.as_bytes(),
+        VECTOR,
+        "fixture no longer carries timeout"
+    );
+    let git = Fake {
+        manifest: None,
+        manifest_at_reseal_base: Some(at_base.into_bytes()),
+        messages: vec![
+            (ORPHAN.into(), "a push around the pipeline\n".into()),
+            (
+                LAST_LANDING.into(),
+                format!("feat: the last real landing\n\nSpine-Seal: quick base={BASE} head=x\n"),
+            ),
+        ],
+        ..Default::default()
+    };
+
+    let identity = me();
+    let prepared = prepare(
+        &git,
+        Refs {
+            trunk: TRUNK,
+            head: &head_ref,
+        },
+        &Collector {
+            mode: Mode::Ci,
+            self_bytes: SelfBytes::Verified,
+            keys: keys_reachable(),
+            identity: &identity,
+        },
+        &Shipped,
+    )
+    .expect("a reseal prepares");
+
+    assert_eq!(
+        prepared.run.base, LAST_LANDING,
+        "the last valid landing below the range, never trunk's tip"
+    );
+    assert_eq!(
+        prepared.policy.timeout_secs, 900,
+        "every policy read for a reseal is from base=, params.timeout included"
+    );
+}
+
+/// The orphan itself is "neither a landing nor the trust root", so the walk for
+/// `base=` starts *below* it — an orphan carrying its own `Spine-Seal` line
+/// must not be mistaken for the landing below the range.
+#[test]
+fn the_orphan_is_not_its_own_base() {
+    let head_ref = format!("quick/reseal-{ORPHAN}");
+    let git = Fake {
+        manifest: None,
+        manifest_at_reseal_base: Some(VECTOR.to_vec()),
+        messages: vec![
+            (
+                ORPHAN.into(),
+                "pushed around the pipeline\n\nSpine-Seal: quick base=zz head=zz\n".into(),
+            ),
+            (
+                LAST_LANDING.into(),
+                format!("feat: real\n\nSpine-Seal: quick base={BASE} head=x\n"),
+            ),
+        ],
+        ..Default::default()
+    };
+    let identity = me();
+    let prepared = prepare(
+        &git,
+        Refs {
+            trunk: TRUNK,
+            head: &head_ref,
+        },
+        &Collector {
+            mode: Mode::Ci,
+            self_bytes: SelfBytes::Verified,
+            keys: keys_reachable(),
+            identity: &identity,
+        },
+        &Shipped,
+    )
+    .expect("a reseal prepares");
+    assert_eq!(prepared.run.base, LAST_LANDING);
+}
+
+/// No `Spine-Seal` anywhere below the orphan: there is nothing for a reseal's
+/// `base=` to name, and refusing beats writing a file the trusted stage will
+/// answer `base-moved` to forever.
+#[test]
+fn a_reseal_with_no_landing_below_the_orphan_refuses() {
+    let head_ref = format!("quick/reseal-{ORPHAN}");
+    let git = Fake {
+        messages: vec![
+            (ORPHAN.into(), "orphan\n".into()),
+            (
+                "1111111111111111111111111111111111111111".into(),
+                "seed\n".into(),
+            ),
+        ],
+        ..Default::default()
+    };
+    let identity = me();
+    assert_eq!(
+        prepare(
+            &git,
+            Refs {
+                trunk: TRUNK,
+                head: &head_ref,
+            },
+            &Collector {
+                mode: Mode::Ci,
+                self_bytes: SelfBytes::Verified,
+                keys: keys_reachable(),
+                identity: &identity,
+            },
+            &Shipped,
+        ),
+        Err(PrepareError::NoLandingBelowTheOrphan)
     );
 }
