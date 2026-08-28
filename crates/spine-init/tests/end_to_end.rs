@@ -255,7 +255,7 @@ mod with_a_release {
         assert_eq!(
             text.matches("skip").count(),
             5,
-            "every path skips on a clean re-run: {text}"
+            "every path skips on a clean re-run (generic renders five): {text}"
         );
     }
 
@@ -310,5 +310,60 @@ mod with_a_release {
         assert_eq!(code, 2, "{text}");
         assert!(text.contains("refusing rather than guessing"), "{text}");
         assert!(!scratch.0.join(".spine").exists());
+    }
+
+    /// The full GitHub render set: seven paths, every CI body substituted, and
+    /// every recorded blob equal to what landed on disk.
+    ///
+    /// This is the test CI §15 D20 denied for as long as it stood — the
+    /// comment describing §3.4's token scan spelled `@@`, so `.spine/ci.sh`
+    /// failed the scan, and `.spine/ci.sh` is row 1 of every provider.
+    #[test]
+    fn the_github_render_set_lands_with_every_token_substituted() {
+        let Some(scratch) = Scratch::new("github-render") else {
+            return;
+        };
+        if !available() || build_kind(&scratch) != BuildKind::Release {
+            return;
+        }
+        let out = Command::new(spine())
+            .current_dir(&scratch.0)
+            .args([
+                "init", "--ci", "github", "--identity", "alice@example.com",
+            ])
+            .output()
+            .expect("spine runs");
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+
+        let ci_sh = scratch.read(".spine/ci.sh");
+        assert!(
+            !ci_sh.contains("@@"),
+            "no token survives a render, in a comment or anywhere else"
+        );
+        assert!(ci_sh.contains("https://dist.invalid/spine-synthetic"));
+
+        let collect = scratch.read(".github/workflows/spine-collect.yml");
+        assert!(!collect.contains("PIN_"), "every action pin substituted");
+        assert!(collect.contains("uses: actions/checkout@0000"));
+
+        // Every recorded blob equals what landed. A mismatch here is a G16
+        // failure on the repository's very first landing.
+        let manifest = std::fs::read(scratch.0.join(".spine/manifest.json")).unwrap();
+        let parsed =
+            spine_manifest::Manifest::parse(&manifest, Some(spine_canon::ObjectFormat::Sha1))
+                .expect("conforming");
+        assert_eq!(parsed.files().len(), 7, "five plus the two workflows");
+        for record in parsed.files() {
+            if record.region.is_some() {
+                continue; // covered by the region test above
+            }
+            let on_disk = std::fs::read(scratch.0.join(&record.file_path)).unwrap();
+            assert_eq!(
+                record.blob,
+                spine_canon::git_blob_id(&on_disk, spine_canon::ObjectFormat::Sha1),
+                "{} records a blob that is not what landed",
+                record.path
+            );
+        }
     }
 }

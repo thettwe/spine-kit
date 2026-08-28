@@ -141,6 +141,12 @@ pub fn run(options: &Init) -> Result<u8> {
         langs: &lang_refs,
     });
 
+    // CI §3.4 step 1: validate the release manifest BEFORE any plan is
+    // computed, and step 2: build the substitution table from exactly §3.3's
+    // rows. A development build has no manifest and every row will refuse.
+    let release = EMBEDDED_RELEASE_MANIFEST
+        .and_then(|bytes| spine_template::ReleaseManifest::parse(bytes.as_bytes()).ok());
+
     // The render set, in `esc`-path order once the plan sorts it.
     let mut desired = vec![Desired {
         // `user-owned`: spine seeds it once and never touches it again, not by
@@ -161,17 +167,49 @@ pub fn run(options: &Init) -> Result<u8> {
             content: body.as_bytes().to_vec(),
         });
     }
-    desired.extend(ci_paths(&ci));
-
-    // CI §3.4 step 1: "Validate first … **before any plan is computed**."
-    let plan = match EMBEDDED_RELEASE_MANIFEST {
-        None => plan::development_build_plan(&desired),
-        Some(bytes) => match spine_template::ReleaseManifest::parse(bytes.as_bytes()) {
+    if let Some(release) = &release {
+        let table = match spine_template::Table::build(release, &trunk) {
+            Ok(table) => table,
             Err(e) => {
                 eprintln!("spine init: {e}");
-                plan::development_build_plan(&desired)
+                return Ok(exit::REFUSED);
             }
-            Ok(_release) => {
+        };
+        match ci_paths(&ci, &table) {
+            Ok(rows) => desired.extend(rows),
+            Err(why) => {
+                // CI §3.4: "Any occurrence is `unsubstituted-token`: the whole
+                // plan is REFUSE and nothing is written."
+                eprintln!("spine init: {why}");
+                eprintln!("spine init: the whole plan is refused; nothing was written");
+                return Ok(exit::REFUSED);
+            }
+        }
+    } else {
+        // A development build still names the paths so the plan reports every
+        // row it would have written, each REFUSE with `no-release-manifest`.
+        desired.extend(
+            spine_template::ci_templates::Provider::parse(&ci)
+                .map(|p| {
+                    p.files()
+                        .iter()
+                        .map(|f| Desired {
+                            path: f.path.to_string(),
+                            owner: Owner::SpineOwned,
+                            template: f.template_ref(),
+                            content: Vec::new(),
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default(),
+        );
+    }
+
+    // CI §3.4 step 1: "Validate first … **before any plan is computed**."
+    let plan = match &release {
+        None => plan::development_build_plan(&desired),
+        Some(_) => {
+            {
                 let tree = HeadTree { repo: &repo };
                 // **The manifest already in the tree, if there is one.**
                 //
@@ -395,43 +433,34 @@ fn detect_langs(root: &Path) -> Option<Vec<String>> {
     (!found.is_empty()).then_some(found)
 }
 
-/// CI §3.1's per-provider path table.
+/// CI §3.1's per-provider path table, rendered.
 ///
-/// Note `ci-generic` "names the provider-independent shell, not the `generic`
-/// provider": a `--ci github` repository carries `.spine/ci.sh` with
-/// `"template": "ci-generic@4"`.
-///
-/// The bodies are empty here because a development build renders no CI
-/// definition; the paths and templates are correct so the plan reports the
-/// right rows.
-fn ci_paths(provider: &str) -> Vec<Desired> {
-    let owned = |path: &str, template: &str| Desired {
-        path: path.into(),
-        owner: Owner::SpineOwned,
-        template: template.into(),
-        content: Vec::new(),
-    };
-    let mut paths = vec![owned(".spine/ci.sh", "ci-generic@4")];
-    match provider {
-        "github" => {
-            // Two files, not one: `workflow_run` selects its trigger by the
-            // triggering workflow's `name:`, so a single self-named workflow
-            // chains from its own completion and runs for ever (CI §3.2).
-            paths.push(owned(
-                ".github/workflows/spine-collect.yml",
-                "ci-github-collect@4",
-            ));
-            paths.push(owned(".github/workflows/spine-land.yml", "ci-github-land@4"));
-        }
-        "gitlab" => {
-            paths.push(owned(".gitlab-ci.yml", "ci-gitlab@4"));
-            paths.push(owned(".spine/gitlab/untrusted.yml", "ci-gitlab@4"));
-            paths.push(owned(".spine/gitlab/trusted.yml", "ci-gitlab@4"));
-        }
-        // `generic` writes nothing beyond `.spine/ci.sh`.
-        _ => {}
-    }
-    paths
+/// The bodies and the table both live in `spine_template::ci_templates`; this
+/// only substitutes and turns the result into plan rows. Rendering happens here
+/// rather than at plan time because CI §3.4 puts the byte scan **before** the
+/// plan compares blobs: "the scan precedes every write, and one failure refuses
+/// the whole plan rather than writing the paths that happened to pass."
+fn ci_paths(
+    provider: &str,
+    table: &spine_template::Table,
+) -> std::result::Result<Vec<Desired>, String> {
+    let provider = spine_template::ci_templates::Provider::parse(provider)
+        .ok_or_else(|| format!("unknown provider {provider:?}"))?;
+
+    let rendered = spine_template::ci_templates::render_all(provider, table)
+        .map_err(|refusal| refusal.to_string())?;
+
+    Ok(rendered
+        .into_iter()
+        .zip(provider.files())
+        .map(|((path, body), file)| Desired {
+            path: path.to_string(),
+            // CI §3.1's fourth column is `spine-owned` on all six rows.
+            owner: Owner::SpineOwned,
+            template: file.template_ref(),
+            content: body.into_bytes(),
+        })
+        .collect())
 }
 
 /// MF §3.6's twelve templates at their v1 versions.

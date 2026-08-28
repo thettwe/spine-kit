@@ -21,7 +21,7 @@
 set -eu
 
 # Render-time constants.  `spine init` substitutes them; a rendered ci.sh still
-# containing a '@@' token is not a conforming render and init refuses to write it.
+# containing an unsubstituted token is not a conforming render (see 3.4).
 SPINE_DIST_BASE_DEFAULT='@@DIST_BASE@@'
 
 NL="$(printf '\n_')"; NL="${NL%_}"

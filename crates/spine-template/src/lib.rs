@@ -9,8 +9,10 @@
 //! So every body here is a compile-time constant, and the only variance is the
 //! handful of substitution spans each template's spec names.
 
+pub mod ci_templates;
 pub mod constitution;
 pub mod harness;
+pub mod keyring_seed;
 pub mod regions;
 pub mod release;
 pub mod scaffold;

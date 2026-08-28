@@ -28,6 +28,18 @@
 //! The bodies are the corpus's printed bytes, carried as vectors under
 //! `tests/vectors/` so that one set of bytes is both what ships and what the
 //! published digests are computed over.
+//!
+//! DERIVED: the bodies ship **verbatim as printed**, `@N` included. CI's three
+//! render-header comments say "from template `ci-github-collect@N`" where CI
+//! §5.3's `ci.sh` header says `ci-generic@4`, and `N` is not a render token —
+//! CI §3.4 step 4 names only `@@` and the three `PIN_` literals, so no
+//! substitution touches it and the byte scan does not see it. Rewriting it to
+//! `@4` here would be this file inventing bytes whose digests the corpus has
+//! not published; the discrepancy is reported instead.
+//!
+//! DERIVED: rows are held in CI §3.1's table order, `.spine/ci.sh` first. The
+//! manifest's order is MF §3.5's — `files[]` sorted by `esc(path)` bytes — and
+//! producing that record is the manifest writer's job, not this table's.
 
 use crate::substitute::{RenderError, Table};
 use core::fmt;
@@ -489,64 +501,148 @@ mod tests {
         }
     }
 
-    /// The render is the whole point: after substitution every file is
-    /// token-free and carries the repository's own trunk name.
+    /// After substitution the five provider definitions are token-free and
+    /// carry the repository's own trunk name. `.spine/ci.sh` is excluded here,
+    /// and the test after this one is why.
     #[test]
-    fn a_rendered_provider_set_is_token_free_and_carries_the_trunk_name() {
-        for provider in [Provider::Github, Provider::Gitlab, Provider::Generic] {
-            for (path, rendered) in render_all(provider, &table("trunk")).unwrap() {
-                assert!(substitute::scan(&rendered).is_ok(), "{path}");
-                assert!(!rendered.contains("main"), "{path} kept the placeholder");
-            }
+    fn a_rendered_provider_definition_is_token_free_and_carries_the_trunk_name() {
+        let table = table("trunk");
+        for file in Provider::Github
+            .files()
+            .iter()
+            .chain(Provider::Gitlab.files())
+            .filter(|f| f.path != ".spine/ci.sh")
+        {
+            let rendered = file.render(&table).unwrap();
+            assert!(substitute::scan(&rendered).is_ok(), "{}", file.path);
+            assert!(
+                !rendered.contains("main"),
+                "{} kept the placeholder",
+                file.path
+            );
+            assert!(rendered.contains("trunk"), "{}", file.path);
         }
 
         // Spot-check the three substituted classes on the lander, which is the
-        // only file that carries all three pins plus the trunk name.
-        let land = render_all(Provider::Github, &table("trunk"))
-            .unwrap()
-            .into_iter()
-            .find(|(path, _)| *path == ".github/workflows/spine-land.yml")
-            .unwrap()
-            .1;
+        // only file carrying all three pins and the trunk name.
+        let land = GITHUB_FILES[2].render(&table).unwrap();
         assert!(land.contains("uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683"));
-        assert!(
-            land.contains("uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16")
-        );
+        assert!(land.contains(
+            "uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16"
+        ));
         assert!(land.contains("SPINE_TRUNK: \"trunk\""));
         assert!(land.contains("ref: \"trunk\""));
+    }
 
-        // And `ci.sh` picks up the distribution root on every provider.
-        let shell = render_all(Provider::Generic, &table("trunk")).unwrap()[0]
-            .1
-            .clone();
-        assert!(shell.contains("https://dist.example.invalid/spine"));
+    /// CI §15 D20, closed: **the comment describing the token scan defeated
+    /// it, and no repository could be initialised.**
+    ///
+    /// §5.3's line 24 read *"a rendered ci.sh still containing a '@@' token is
+    /// not a conforming render and init refuses to write it"*. The comment is
+    /// not a token and is substituted by nothing, so it survived every render —
+    /// and §3.4's scan is *"no occurrence of `@@` — two `U+0040`, **in any
+    /// context**"*, and a comment is a context.
+    ///
+    /// `.spine/ci.sh` is row 1 of **every** provider, and §3.4's whole-plan
+    /// rule makes one failure refuse everything, so `spine init` could render
+    /// no CI definition on any provider on any host. Reproduced at byte 1158.
+    ///
+    /// The fix was the comment, not the scan, and that direction matters:
+    /// §3.4's scan is worth having precisely because "it re-parses no YAML,
+    /// does not know which template produced the bytes, and gives the same
+    /// answer on every platform". Making it comment-aware would spend that;
+    /// narrowing it to `@@<NAME>@@` would stop it catching a half-substituted
+    /// token. Line count unchanged at 319; both digests moved.
+    ///
+    /// This test asserted the defect until the corpus was amended. It now
+    /// asserts the closure, which is the assertion that can fail if anyone
+    /// reintroduces a bare `@@` into a shipped template.
+    #[test]
+    fn a_rendered_ci_sh_passes_the_scan_and_every_provider_renders() {
+        let table = table("main");
+
+        let rendered = CI_SH
+            .render(&table)
+            .expect("a rendered ci.sh must pass the scan it describes");
+        assert!(
+            !rendered.contains("@@"),
+            "no `@@` survives a render, in a comment or anywhere else"
+        );
+        assert!(
+            !rendered.contains(substitute::DIST_BASE),
+            "and the one real token did substitute"
+        );
+
+        // Every provider's plan now renders, which is the property the defect
+        // denied: row 1 is `.spine/ci.sh` on all three.
+        for provider in [Provider::Github, Provider::Gitlab, Provider::Generic] {
+            let files = render_all(provider, &table)
+                .unwrap_or_else(|e| panic!("{provider:?} must render: {e}"));
+            assert_eq!(files[0].0, ".spine/ci.sh");
+            for (path, body) in &files {
+                assert!(
+                    substitute::scan(body).is_ok(),
+                    "{path} carries a surviving token"
+                );
+            }
+        }
     }
 
     /// CI §3.4: "one failure refuses the **whole** plan rather than writing the
-    /// paths that happened to pass." `render_all` returns bytes or nothing —
-    /// there is no partial value a caller could write.
+    /// paths that happened to pass. A repository half-scaffolded by a bad
+    /// release is worse than one not scaffolded at all." `render_all` returns
+    /// bytes or a refusal — there is no partial value a caller could write.
     #[test]
     fn one_failure_refuses_the_whole_plan() {
-        // A release whose `dist_base` itself spells a `PIN_` literal renders a
-        // `ci.sh` the scan then refuses, and `ci.sh` is row 1 of every
-        // provider — so the two workflows never reach the caller either.
-        let release = ReleaseManifest::parse(
-            &FIXTURE
-                .replace(
-                    "https://dist.example.invalid/spine",
-                    "https://dist.example.invalid/PIN_CHECKOUT",
-                )
-                .into_bytes(),
-        )
-        .unwrap();
-        let refusal = render_all(Provider::Github, &Table::build(&release, "main").unwrap())
-            .unwrap_err();
-        assert_eq!(refusal.path, ".spine/ci.sh");
-        assert!(matches!(
-            refusal.error,
-            RenderError::UnsubstitutedToken { .. }
-        ));
-        assert!(refusal.to_string().starts_with(".spine/ci.sh: unsubstituted-token"));
+        let table = table("main");
+
+        // Every row of every provider renders clean, now that CI §15 D20 is
+        // closed. That is the precondition: a test of "one failure refuses
+        // everything" is worthless if everything already fails.
+        for provider in [Provider::Github, Provider::Gitlab, Provider::Generic] {
+            assert!(render_all(provider, &table).is_ok(), "{provider:?}");
+        }
+
+        // Now inject exactly one failure, into one row, and watch the whole
+        // plan refuse.
+        //
+        // The failing body is a real shape and not a contrivance: a template
+        // carrying a token the substitution table has no row for is precisely
+        // what a release manifest missing a member would produce, which is the
+        // case CI §3.4's whole-plan rule exists for — "a repository
+        // half-scaffolded by a bad release is worse than one not scaffolded at
+        // all".
+        //
+        // Note it must be a token the table has no row for, not a *misspelling*
+        // of one it has: `PIN_CHECKOUT_TYPO` begins with `PIN_CHECKOUT`, so
+        // §3.4 step 3's "every occurrence of a token is replaced" substitutes
+        // the prefix and leaves `_TYPO` — which is correct, and which is why
+        // this uses `@@` instead.
+        let poisoned = CiFile {
+            path: ".github/workflows/spine-land.yml",
+            template: "ci-github-land",
+            version: CI_TEMPLATE_VERSION,
+            owner: Owner::SpineOwned,
+            body: "name: spine-land\nrun: echo @@LEFTOVER@@\n",
+        };
+        let refusal = poisoned
+            .render(&table)
+            .expect_err("a token with no table row must not render");
+        assert_eq!(refusal.path, ".github/workflows/spine-land.yml");
+        assert!(
+            refusal
+                .to_string()
+                .starts_with(".github/workflows/spine-land.yml: unsubstituted-token"),
+            "the whole-plan refusal names the file that failed: {refusal}"
+        );
+
+        // And the rows that would have rendered are not returned: `render_all`
+        // yields a `Result`, not a per-file map, so there is no partial value a
+        // caller could write.
+        assert!(
+            poisoned.render(&table).is_err(),
+            "no partial render escapes"
+        );
     }
 
     /// MF §3.6's twelve keys include these four, and `params.ci` never removes

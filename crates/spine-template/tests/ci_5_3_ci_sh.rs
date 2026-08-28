@@ -23,11 +23,11 @@ fn ci_5_3_line_count_and_both_digests() {
     );
     assert_eq!(
         spine_canon::git_blob_id(CI_SH, ObjectFormat::Sha1),
-        "131f13fb0312162579605999d3f9f4e90098c74c"
+        "6946401d143a2f6b2504a9c267a9dc10567c9a83"
     );
     assert_eq!(
         spine_canon::sha256_hex(CI_SH),
-        "d6bcf50cf675614033aaef61df104aad253d30c4accc756719599ad5bd41060b"
+        "6599ef42df8771c0f04ba54631f1f5a19de2860c73725be4ae06c9a0d1603a1d"
     );
 }
 
@@ -49,6 +49,36 @@ fn framing_is_what_a_posix_shell_needs() {
 /// The template carries exactly one render token, and the byte scan must refuse
 /// it *before* substitution — which is the property that makes the scan a
 /// meaningful gate rather than a formality.
+/// The scan must refuse the **unrendered** template and accept the **rendered**
+/// one. Only the second half is new, and it is the half that was false: §5.3's
+/// line 24 carried `'@@'` inside the comment describing the scan, so a rendered
+/// ci.sh failed it too — and `.spine/ci.sh` is on every provider's row, so no
+/// repository could be initialised at all (CI §15 D20).
+#[test]
+fn a_rendered_ci_sh_passes_the_scan_that_an_unrendered_one_fails() {
+    let release = spine_template::ReleaseManifest::parse(
+        br#"{"release_manifest_version":1,"version":"1.4.0",
+             "dist_base":"https://dist.example.invalid/spine",
+             "actions":{
+               "checkout":{"repo":"actions/checkout","commit":"11bd71901bbe5b1630ceea73d27597364c9af683"},
+               "upload_artifact":{"repo":"actions/upload-artifact","commit":"ea165f8d65b6e75b540449e92b4886f43607fa02"},
+               "download_artifact":{"repo":"actions/download-artifact","commit":"fa0a91b85d4f404e444e00e005971372dc801d16"}}}"#,
+    )
+    .expect("a conforming release manifest");
+    let table = spine_template::Table::build(&release, "main").expect("a legal trunk name");
+    let body = core::str::from_utf8(CI_SH).unwrap();
+
+    assert!(
+        substitute::scan(body).is_err(),
+        "an unrendered ci.sh must never pass the scan"
+    );
+    let rendered = table
+        .render_checked(body)
+        .expect("and a rendered one must pass it — otherwise nothing can be initialised");
+    assert!(!rendered.contains("@@"));
+    assert!(rendered.contains("https://dist.example.invalid/spine"));
+}
+
 #[test]
 fn the_unrendered_template_carries_one_token_and_fails_the_scan() {
     let text = core::str::from_utf8(CI_SH).unwrap();

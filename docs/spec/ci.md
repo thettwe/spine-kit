@@ -188,7 +188,7 @@ Reproduced byte for byte. Tabs are tabs; every line ends `LF`; there is exactly 
 set -eu
 
 # Render-time constants.  `spine init` substitutes them; a rendered ci.sh still
-# containing a '@@' token is not a conforming render and init refuses to write it.
+# containing an unsubstituted token is not a conforming render (see 3.4).
 SPINE_DIST_BASE_DEFAULT='@@DIST_BASE@@'
 
 NL="$(printf '\n_')"; NL="${NL%_}"
@@ -490,8 +490,8 @@ exit 0
 
 | | |
 |---|---|
-| `git hash-object` (sha1) | `131f13fb0312162579605999d3f9f4e90098c74c` |
-| SHA-256 of the file | `d6bcf50cf675614033aaef61df104aad253d30c4accc756719599ad5bd41060b` |
+| `git hash-object` (sha1) | `6946401d143a2f6b2504a9c267a9dc10567c9a83` |
+| SHA-256 of the file | `6599ef42df8771c0f04ba54631f1f5a19de2860c73725be4ae06c9a0d1603a1d` |
 | Lines | 319 |
 
 Both were computed by running `git hash-object` and `shasum -a 256` over the file this section reproduces. **They moved twice on 2026-08-27.** First `SPINE_ALLOWED_HOSTS` dropped `repo.maven.apache.org` and `services.gradle.org`, which the owner's decision of 2026-08-26 made dead — Kotlin is not a v1 language, `gradle` is a reserved runner token emitted by nothing, and no invocation set can reach a Gradle build — and the comment above it was rewrapped over the same four lines, leaving the count at 307 (§15 D10, §5.6). Then the process-wide `umask 077` was narrowed, for the reason §5.4 item 1 now states: `umask 022`, an explicit `chmod 0700 "$WORK"`, and `0755` on `$INSTALL_DIR` and `$BIN`. That is twelve lines and the count moved to 319. The blob id is the value a `files[]` record for `.spine/ci.sh` would carry under `object_format: sha1` for this unsubstituted rendering.
@@ -1429,6 +1429,8 @@ Reported here rather than repaired, per `docs/spec/README.md`. **Citations are s
 **D24 · OPEN · G10's scratch clone and the trusted job's disk budget are never related** (PB §5.4 step 5; PB §6.3's G10 row; PB §7.1's trusted row). Step 5 clones the repository twice per landing inside the trusted job, and §7.1's trusted row grants "git objects; policy from trunk" without mentioning that the job needs room for two more copies of the repository and a full index. §6.3 G10 argues at length that a repo too large to pay "should have to say that in its own words", but no CI-facing sentence tells an operator to size the job for it. Recommended: one clause in §7.4 rule 3 or §7.1.
 
 **D25 · OPEN · GitLab's scheduled trusted job has no specified way to find a candidate** (PB §7.4 rule 0, *"a schedule that polls for candidates"*). *"a schedule that polls for candidates"*. §5.4 step 1 requires `H` to be named; a schedule names nothing, and nothing in the playbook defines discovery, ordering, or what happens when two candidates are ready. A GitLab implementation cannot be written from the text. §8.4 fixes it. Recommended: adopt §8.4, or drop the schedule and require a trigger.
+
+**D20 · CLOSED · The comment describing the token scan defeated it, and no repository could be initialised.** *(Found by rendering `.spine/ci.sh`, 2026-08-28.)* §5.3's line 24 read *"a rendered ci.sh still containing a '@@' token is not a conforming render and init refuses to write it"* — and §3.4's scan is *"no occurrence of `@@` — two `U+0040`, **in any context**"*. The comment is not a token and is substituted by nothing, so it survived every render; the scan then found it, and *"any occurrence is `unsubstituted-token`: the whole plan is `REFUSE` and nothing is written"*. **`spine init` could therefore render no CI definition for any provider on any host** — `.spine/ci.sh` is on every provider's row (§3.1) — so no repository could be initialised at all. Reproduced against the published bytes: the scan refuses at byte 1158, which is inside line 24. **Fixed by rewording the comment**, which is the only fix that keeps what §3.4 says the scan is worth: *"It is a byte scan over the rendered bytes and reads nothing else — it re-parses no YAML, does not know which template produced the bytes, and gives the same answer on every platform."* Making the scan comment-aware would destroy exactly that property, and narrowing it to `@@<NAME>@@` would stop it catching a half-substituted token. The line count is unchanged at **319**; the two digests moved and §5.3's table carries the new ones. §18 records nothing new — no value here is the owner's.
 
 ## 16. Corrections owed to sibling specs — both adopted
 
