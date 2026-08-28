@@ -85,9 +85,11 @@ name = "spine-cli"
 version = "0.0.0"
 dependencies = [
  "spine-canon",
+ "spine-collect",
  "spine-graph",
  "spine-init",
  "spine-manifest",
+ "spine-runner",
  "spine-template",
 ]
 
@@ -186,6 +188,8 @@ version = "0.0.0"
 dependencies = [
  "spine-canon",
  "spine-collect",
+ "spine-isolate",
+ "spine-manifest",
  "spine-resolve",
 ]
 

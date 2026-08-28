@@ -46,7 +46,7 @@ pub fn run(check: &Check) -> ExitCode {
     } else if check.constitution {
         "--constitution"
     } else if check.collect {
-        "--collect"
+        return crate::collect::run(check);
     } else if check.approve.is_some() {
         "--approve"
     } else if check.review.is_some() {

@@ -1,0 +1,10 @@
+{"deselected":false,"expected_failure":false,"id":"tests/test_all.py::test_passes","phases":[],"t":"item"}
+{"deselected":false,"expected_failure":false,"id":"tests/test_all.py::test_fails","phases":[],"t":"item"}
+{"deselected":false,"expected_failure":true,"id":"tests/test_all.py::test_xfails","phases":[],"t":"item"}
+{"deselected":false,"expected_failure":true,"id":"tests/test_all.py::test_xpasses","phases":[],"t":"item"}
+{"deselected":false,"expected_failure":false,"id":"tests/test_all.py::test_skips","phases":[],"t":"item"}
+{"deselected":false,"expected_failure":false,"id":"tests/test_all.py::test_param[1]","phases":[],"t":"item"}
+{"deselected":false,"expected_failure":false,"id":"tests/test_all.py::test_param[2]","phases":[],"t":"item"}
+{"deselected":true,"expected_failure":false,"id":"tests/test_all.py::test_deselect_me","phases":[],"t":"item"}
+{"selected":7,"t":"count"}
+{"t":"end"}

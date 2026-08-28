@@ -8,6 +8,7 @@
 mod allocate;
 mod argv;
 mod check;
+mod collect;
 mod index;
 mod init;
 mod new;

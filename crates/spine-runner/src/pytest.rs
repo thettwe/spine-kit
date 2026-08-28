@@ -24,8 +24,8 @@ use crate::transport::{Item, Phase, PhaseOutcome, Report};
 /// Which is why this takes an [`Item`] and not a word: the transport carries no
 /// summary word for it to be tempted by.
 pub fn outcome_of(item: &Item) -> Outcome {
-    // "collected, then excluded before running → `deselected`", and it is
-    // decided before the phases because a deselected item has none.
+    // "collected, then excluded before running → `deselected`", decided first
+    // because a deselected item has no phases at all.
     if item.deselected {
         return Outcome::Deselected;
     }
@@ -38,26 +38,40 @@ pub fn outcome_of(item: &Item) -> Outcome {
     };
 
     // "failure or exception in `setup`/`teardown`, or a collection error →
-    // `error`", and it outranks the call's own result: an item whose teardown
-    // exploded did not pass, whatever `call` said.
+    // `error`". **Failure**, not a skip: `@pytest.mark.skip` skips *at setup*,
+    // and reading that as an error would turn every skipped test into one.
     for around in [Phase::Setup, Phase::Teardown] {
         if phase(around) == Some(PhaseOutcome::Failed) {
             return Outcome::Error;
         }
     }
 
+    // **A skip is not always a `call` skip**, which is what running this
+    // against pytest 9.1 showed: `@pytest.mark.skip` produces
+    // `[setup: skipped, teardown: passed]` and **no `call` phase at all**,
+    // while `pytest.skip()` inside a test produces a `call` skip. RF §6.7's
+    // row is "skipped, no expected-failure marker" — unqualified by phase — so
+    // the observation is over every phase, not over `call`.
+    let skipped_anywhere = item
+        .phases
+        .iter()
+        .any(|(_, outcome)| *outcome == PhaseOutcome::Skipped);
     let call = phase(Phase::Call);
+
     match (call, item.expected_failure) {
-        // "`call` failed or skipped, expected-failure marker set → `xfail`"
-        (Some(PhaseOutcome::Failed | PhaseOutcome::Skipped), true) => Outcome::Xfail,
-        // "`call` failed, no expected-failure marker → `failed`"
-        (Some(PhaseOutcome::Failed), false) => Outcome::Failed,
-        // "skipped, no expected-failure marker → `skipped`"
-        (Some(PhaseOutcome::Skipped), false) => Outcome::Skipped,
         // "all phases passed, expected-failure marker set → `xpass`"
         (Some(PhaseOutcome::Passed), true) if all_passed(item) => Outcome::Xpass,
         // "all phases passed, no expected-failure marker → `passed`"
         (Some(PhaseOutcome::Passed), false) if all_passed(item) => Outcome::Passed,
+        // "`call` failed or skipped, expected-failure marker set → `xfail`"
+        (Some(PhaseOutcome::Failed | PhaseOutcome::Skipped), true) => Outcome::Xfail,
+        // "`call` failed, no expected-failure marker → `failed`"
+        (Some(PhaseOutcome::Failed), false) => Outcome::Failed,
+        // "skipped, no expected-failure marker → `skipped`", and its
+        // marker-bearing twin, which reaches here when the skip was at setup
+        // and there is no `call` phase to match above.
+        _ if skipped_anywhere && item.expected_failure => Outcome::Xfail,
+        _ if skipped_anywhere => Outcome::Skipped,
         // "any other terminal report → `unknown`"
         _ => Outcome::Unknown,
     }

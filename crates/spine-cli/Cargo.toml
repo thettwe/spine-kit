@@ -14,7 +14,9 @@ path = "src/main.rs"
 spine-canon = { path = "../spine-canon" }
 spine-manifest = { path = "../spine-manifest" }
 spine-graph = { path = "../spine-graph" }
+spine-collect = { path = "../spine-collect" }
 spine-init = { path = "../spine-init" }
+spine-runner = { path = "../spine-runner" }
 spine-template = { path = "../spine-template" }
 
 [features]

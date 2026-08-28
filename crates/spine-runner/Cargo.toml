@@ -9,6 +9,8 @@ publish = false
 [dependencies]
 spine-canon = { path = "../spine-canon" }
 spine-collect = { path = "../spine-collect" }
+spine-isolate = { path = "../spine-isolate" }
+spine-manifest = { path = "../spine-manifest" }
 spine-resolve = { path = "../spine-resolve" }
 
 [lints]

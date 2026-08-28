@@ -17,7 +17,9 @@
 //!
 //! [`RunnerAdapter`]: spine_collect::RunnerAdapter
 
+pub mod host;
 pub mod pytest;
 pub mod transport;
 
+pub use host::LocalHost;
 pub use transport::{Item, Phase, PhaseOutcome, Report, StreamError};
