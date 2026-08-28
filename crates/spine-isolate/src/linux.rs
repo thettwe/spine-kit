@@ -62,6 +62,16 @@ pub fn map_as_root_collector(pid: u32, child_id: u32) -> io::Result<()> {
     // child begins with a valid identity and the capabilities it needs to
     // `setuid` down; it then drops to `child_id`, which is what "a root
     // collector that **drops privilege**" means (RF §7.1, arrangement 2).
+    //
+    // **That line is also a door, and closing it is [`sys::drop_privileges_to`]'s
+    // job, not the map's.** Inside-uid 0 stays mapped to host uid 0, so a child
+    // that can `setuid(0)` is host root — and **P2 cannot see it**: P2 reads
+    // the ids *after* the drop, so such a child still reports non-zero ids and
+    // still creates a file the host sees owned by `child_id`. The drop must
+    // therefore be irreversible before `exec`, with all three of real,
+    // effective and saved set, and it is verified rather than assumed. A
+    // caller that writes this map and does not drop leaves a boundary that
+    // measures as `container` and is not one.
     let map = format!("0 0 1\n{child_id} {child_id} 1\n");
     std::fs::write(format!("/proc/{pid}/uid_map"), &map)?;
     std::fs::write(format!("/proc/{pid}/gid_map"), &map)?;
@@ -185,6 +195,25 @@ pub fn apply(spec: &RootSpec) -> io::Result<()> {
                     Some("tmpfs"),
                     ms::RDONLY | ms::NOSUID | ms::NODEV,
                     Some("size=4k,mode=0555"),
+                )?;
+            }
+            MountStep::ProcFs { at } => {
+                std::fs::create_dir_all(&at)?;
+                // **A fresh mount, never a bind.** `m1.rs`'s own note is the
+                // reason: "`procfs` shows the PID namespace of the task that
+                // mounted it, so binding the job's `/proc` would show the
+                // job's pids and P3's limb would find the collector's own —
+                // inverting the test rather than emptying it."
+                //
+                // `nosuid,nodev,noexec` for the same reason every other mount
+                // here carries them: the child is an unprivileged id and has
+                // no business finding a setuid binary under `/proc`.
+                sys::mount_at(
+                    "proc",
+                    &at,
+                    Some("proc"),
+                    ms::NOSUID | ms::NODEV | ms::NOEXEC,
+                    None,
                 )?;
             }
             MountStep::PivotRoot { new_root, put_old } => {

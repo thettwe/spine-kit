@@ -367,17 +367,43 @@ pub enum RestoreOutcome {
 ///   because the two alternatives both give something away — writing the script
 ///   into the checkout puts trunk's bytes at a path the candidate's tree
 ///   controls (and a `T` checkout is the candidate's tree), and `sh -c <string>`
-///   publishes them in the process table and cannot carry a NUL. The cost is
-///   named rather than hidden: a restore script cannot read its own stdin.
+///   publishes them in the process table and cannot carry a NUL.
+///
+///   **It is a file outside the checkout, never a pipe into `sh`'s stdin.**
+///   CI §5.1 refuses the piped form by name, and its reason transfers here
+///   exactly: "A shell reading its script from file descriptor 0 shares that
+///   descriptor with every child it spawns, so the first child that reads
+///   stdin consumes the rest of the script." The restore phase spawns `pip`,
+///   `npm` and `pub` against the checkout's own lockfiles, whose lifecycle
+///   hooks — `postinstall`, `setup.py` — are **candidate-authored**, and it is
+///   "the last phase of the run that holds the job's own network". A candidate
+///   that plants a `postinstall` reading stdin would swallow trunk's remaining
+///   restore bytes in the one phase with egress.
+///
+///   Outside the checkout because the checkout is the tree under test: a
+///   script written into it is a path candidate code can read, rewrite between
+///   the write and the exec, or ship in its own diff. The child's stdin is
+///   `/dev/null`, which also gives the phase the property the piped form only
+///   claimed — a restore script cannot read its own stdin, and now neither can
+///   anything it spawns.
 /// - **cwd** *"at the root of that checkout"*.
 /// - **environment** *"the collector's own, unchanged"* — so nothing is removed
 ///   and nothing is added, which is what keeps §4.2's `keys_visible` predicate
 ///   already covering it by its first conjunct.
 /// - **deadline** `params.timeout`; on expiry *"kill its process group and reap
 ///   it"*.
+///
+/// `scratch` is a directory **outside the checkout** the collector controls —
+/// M1's private `tmpfs`, or the job's own temporary directory where no boundary
+/// was built. The script is written there and named on the command line.
 #[cfg(unix)]
-pub fn run_restore(script: &RestoreScript, cwd: &Path, deadline: Duration) -> RestoreOutcome {
-    use std::io::Write;
+pub fn run_restore(
+    script: &RestoreScript,
+    cwd: &Path,
+    scratch: &Path,
+    deadline: Duration,
+) -> RestoreOutcome {
+    use std::os::unix::fs::OpenOptionsExt;
     use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
 
@@ -385,10 +411,33 @@ pub fn run_restore(script: &RestoreScript, cwd: &Path, deadline: Duration) -> Re
         return RestoreOutcome::Empty;
     };
 
+    // 0700, and created rather than opened: the file must not already exist,
+    // so nothing can have pre-created it as a symlink into the checkout.
+    let path = scratch.join("spine-restore.sh");
+    let _ = std::fs::remove_file(&path);
+    if let Err(e) = std::fs::create_dir_all(scratch) {
+        return RestoreOutcome::SpawnFailed(e.to_string());
+    }
+    let write = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o700)
+        .open(&path)
+        .and_then(|mut f| {
+            use std::io::Write;
+            f.write_all(bytes)
+        });
+    if let Err(e) = write {
+        return RestoreOutcome::SpawnFailed(e.to_string());
+    }
+
     let mut command = Command::new(RESTORE_INTERPRETER);
     command
+        .arg(&path)
         .current_dir(cwd)
-        .stdin(Stdio::piped())
+        // "a restore script cannot read its own stdin", and neither can any
+        // child it spawns — which is the half the piped form got backwards.
+        .stdin(Stdio::null())
         // The collector's own stderr and stdout: CI §5.1 puts every diagnostic
         // on stderr, and the restore phase's output is a diagnostic. It is not a
         // runner, so it has no stream to read (RF §7.1).
@@ -404,30 +453,9 @@ pub fn run_restore(script: &RestoreScript, cwd: &Path, deadline: Duration) -> Re
         Err(e) => return RestoreOutcome::SpawnFailed(e.to_string()),
     };
 
-    // The script is fed from a **separate thread**, and the deadline clock
-    // starts before it.
-    //
-    // A blocking `write_all` on this thread bypassed the deadline entirely: a
-    // `.spine/restore.sh` larger than the pipe buffer (64 KiB) whose head
-    // blocks — `sleep 3600`, a `curl` at a dead socket — left `write_all`
-    // waiting for a reader that never drains, so `started` was never taken and
-    // `try_wait` was never called. The collector wedged forever, on a path
-    // whose whole purpose is to be bounded: this is the one phase that keeps
-    // the job's network, and `params.timeout` is what bounds it.
-    //
-    // The thread is detached deliberately. When the deadline expires the
-    // process group is killed, the pipe breaks, `write_all` fails, and the
-    // thread ends; joining it would reintroduce the wait this removes.
-    if let Some(mut stdin) = child.stdin.take() {
-        let script = bytes.clone();
-        std::thread::spawn(move || {
-            // A script that closes stdin early makes this a broken pipe, which
-            // is the script's business and not a failure of the phase.
-            let _ = stdin.write_all(&script);
-            // Dropping `stdin` closes the pipe, which is how the script sees
-            // EOF and can exit at all.
-        });
-    }
+    // The script is a file the child opens for itself, so there is no writer
+    // thread and no pipe to break. The deadline below is therefore the only
+    // thing bounding the phase — which is what it was always meant to be.
 
     let pgid = child.id();
     let started = std::time::Instant::now();
@@ -595,6 +623,17 @@ pub fn invocation_count(runners: &[RunnerPlan]) -> u32 {
 mod tests {
     use super::clone;
     use super::*;
+
+    /// A scratch directory **outside** any checkout, which is where the restore
+    /// script goes: the checkout is the tree under test, and a script written
+    /// into it is a path candidate code can read or rewrite between the write
+    /// and the exec.
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("spine-restore-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("a scratch directory");
+        dir
+    }
 
     fn two_runners() -> Vec<RunnerPlan> {
         vec![
@@ -858,7 +897,12 @@ mod tests {
             None
         );
 
-        let outcome = run_restore(&absent, Path::new("."), Duration::from_secs(1));
+        let outcome = run_restore(
+            &absent,
+            Path::new("."),
+            &scratch("empty"),
+            Duration::from_secs(1),
+        );
         assert_eq!(outcome, RestoreOutcome::Empty);
     }
 
@@ -872,11 +916,13 @@ mod tests {
         let zero = run_restore(
             &RestoreScript::Present(b"exit 0\n".to_vec()),
             &cwd,
+            &scratch("exit-zero"),
             Duration::from_secs(30),
         );
         let seven = run_restore(
             &RestoreScript::Present(b"exit 7\n".to_vec()),
             &cwd,
+            &scratch("exit-seven"),
             Duration::from_secs(30),
         );
         assert_eq!(zero, RestoreOutcome::Ran);
@@ -892,6 +938,7 @@ mod tests {
         let outcome = run_restore(
             &RestoreScript::Present(b"sleep 30\n".to_vec()),
             &cwd,
+            &scratch("overrun"),
             Duration::from_millis(200),
         );
         assert_eq!(outcome, RestoreOutcome::TimedOut);
@@ -905,6 +952,7 @@ mod tests {
         let outcome = run_restore(
             &RestoreScript::Present(b"pwd > cwd.txt\n".to_vec()),
             &dir,
+            &scratch("cwd"),
             Duration::from_secs(30),
         );
         assert_eq!(outcome, RestoreOutcome::Ran);
@@ -916,6 +964,100 @@ mod tests {
             "{seen}"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// RF §7.1's arrangement 2 is "a root collector that **drops privilege**",
+    /// and `linux.rs`'s map writes `0 0 1` so the child begins with the
+    /// capability to drop at all. That line is also a door: inside-uid 0 stays
+    /// mapped to host uid 0, so a child that can `setuid(0)` is host root.
+    ///
+    /// **P2 is structurally unable to catch it** — P2 reads the ids *after* the
+    /// drop, so such a child still reports non-zero ids and still creates a
+    /// file the host sees owned by the mapped id. The guarantee therefore has
+    /// to be right by construction, which is `sys::drop_privileges_to`: all
+    /// three of real, effective and saved on both gid and uid, supplementary
+    /// groups first, and `setuid(0)` **checked** to fail afterwards.
+    ///
+    /// A source scan and not a behaviour test, because the behaviour is only
+    /// observable as root on Linux and `linux.rs` does not compile on this
+    /// host at all. What it pins is the pairing: the map is written by one
+    /// function and closed by another, and a caller that used the first
+    /// without the second would have a boundary that measures as `container`
+    /// and is not one.
+    #[test]
+    fn the_root_collector_map_is_paired_with_an_irreversible_drop() {
+        let linux = include_str!("linux.rs");
+        assert!(
+            linux.contains("closing it is [`sys::drop_privileges_to`]'s"),
+            "map_as_root_collector must name the drop that closes its first line"
+        );
+        let sys = include_str!("sys.rs");
+        for required in [
+            "setresuid(id, id, id)",
+            "setresgid(id, id, id)",
+            "setgroups(0",
+            "the privilege drop is reversible",
+        ] {
+            assert!(sys.contains(required), "the drop must carry {required:?}");
+        }
+    }
+
+    /// CI §5.1 refuses the piped form by name, and its reason transfers here:
+    /// "A shell reading its script from file descriptor 0 shares that
+    /// descriptor with every child it spawns, so the first child that reads
+    /// stdin consumes the rest of the script."
+    ///
+    /// The restore phase spawns `pip`, `npm` and `pub` against the checkout's
+    /// own lockfiles, whose lifecycle hooks are candidate-authored, and it is
+    /// the one phase that holds the job's network. Piped, a `postinstall` that
+    /// read stdin swallowed trunk's remaining restore bytes.
+    #[test]
+    fn a_child_that_reads_stdin_cannot_swallow_the_rest_of_the_script() {
+        let cwd = scratch("stdin-thief");
+        // The first line spawns a child that drains stdin. Piped, `cat` would
+        // consume everything after it and the marker would never be written.
+        let outcome = run_restore(
+            &RestoreScript::Present(b"cat > swallowed.txt\ntouch reached-the-end.txt\n".to_vec()),
+            &cwd,
+            &scratch("stdin-thief-scratch"),
+            Duration::from_secs(30),
+        );
+        assert_eq!(outcome, RestoreOutcome::Ran);
+        assert!(
+            cwd.join("reached-the-end.txt").exists(),
+            "the shell ran every line: no child could consume the script"
+        );
+        // And the child got EOF immediately rather than the script's tail.
+        let swallowed = std::fs::read(cwd.join("swallowed.txt")).unwrap_or_default();
+        assert!(swallowed.is_empty(), "stdin is /dev/null: {swallowed:?}");
+        let _ = std::fs::remove_dir_all(&cwd);
+    }
+
+    /// The script goes to a directory the collector controls, never into the
+    /// checkout — which is the tree under test, and a path candidate code can
+    /// read or rewrite between the write and the exec.
+    #[test]
+    fn the_script_is_never_written_into_the_checkout() {
+        let cwd = scratch("no-script-in-checkout");
+        let scratch_dir = scratch("script-lives-here");
+        let outcome = run_restore(
+            &RestoreScript::Present(b"true\n".to_vec()),
+            &cwd,
+            &scratch_dir,
+            Duration::from_secs(30),
+        );
+        assert_eq!(outcome, RestoreOutcome::Ran);
+        let in_checkout: Vec<_> = std::fs::read_dir(&cwd)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name())
+            .collect();
+        assert!(
+            in_checkout.is_empty(),
+            "the checkout is untouched: {in_checkout:?}"
+        );
+        let _ = std::fs::remove_dir_all(&cwd);
+        let _ = std::fs::remove_dir_all(&scratch_dir);
     }
 
     /// RF §7.1 *The phase is not conditioned on the profile*: *"Under
@@ -942,6 +1084,7 @@ mod tests {
         let outcome = run_restore(
             &RestoreScript::Present(b"true\n".to_vec()),
             &std::env::temp_dir(),
+            &scratch("no-boundary"),
             Duration::from_secs(30),
         );
         assert_eq!(outcome, RestoreOutcome::Ran, "no boundary is still a phase");

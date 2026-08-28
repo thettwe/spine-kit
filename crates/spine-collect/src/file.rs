@@ -22,10 +22,28 @@
 //! and RF §4.5's determinism claim is that two conforming implementations
 //! produce identical files.
 
+use std::path::PathBuf;
+
 use crate::header::{Header, Provenance};
 use crate::malformed::{Malformed, Section};
 use crate::record::{BaseRecord, EndRecord, ResultRecord, Status, record_kind};
 use spine_canon::{ObjectFormat, canonicalize, parse};
+
+/// RF §3 and §11 fix it: "One file per `T`, covering every runner … §11 fixes
+/// the path as `results/<T>.jsonl`".
+pub const RESULTS_DIR: &str = ".spine/cache/results";
+
+/// A temp-file suffix "no other process can predict", from the OS rather than
+/// from the pid or a clock — RF §7 rule 1 puts a clock out of reach anyway, and
+/// a pid is guessable by anything that can read `/proc`.
+fn unpredictable_suffix() -> std::io::Result<String> {
+    let mut bytes = [0u8; 16];
+    {
+        use std::io::Read;
+        std::fs::File::open("/dev/urandom")?.read_exact(&mut bytes)?;
+    }
+    Ok(bytes.iter().map(|b| format!("{b:02x}")).collect())
+}
 
 /// A whole result file, parsed or about to be written.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -143,6 +161,57 @@ impl ResultFile {
 
     /// RF §4.1's framing: "UTF-8, no BOM … Lines are terminated by a single LF
     /// (`U+000A`). Every line, including the last, is terminated."
+    /// RF §3's publish: temp-and-rename into `.spine/cache/results/<T>.jsonl`.
+    ///
+    /// > "The collector creates the directory itself, writes to a temporary
+    /// > file in the same directory opened `O_CREAT|O_EXCL` under a name no
+    /// > other process can predict, `fsync`s it, and `rename()`s it over
+    /// > `<T>.jsonl`, replacing any file already there."
+    ///
+    /// **The directory is created here and not once at step 6.** RF §7.1's
+    /// probe writes a canary into the result directory at step 1 and, at limb
+    /// (d), tries to *remove the directory* — and on the disposition-2 path,
+    /// where the boundary failed and the run continues, that limb **succeeds**.
+    /// P1 then correctly fails, the collector records `profile=none`, and the
+    /// run proceeds to step 10 with the directory gone. A writer that assumed
+    /// it survived would write nothing, `.spine/ci.sh`'s
+    /// `[ -f "$TOP/$RESULT" ]` would fail, and the job would report
+    /// "refused: nothing ran and no result file exists" over a run that ran
+    /// everything.
+    ///
+    /// "**A pre-existing file at the final path is overwritten without
+    /// comment**: nothing in this design may remember that a previous attempt
+    /// happened", which is why the rename is unconditional and its own
+    /// pre-existing target is never consulted.
+    pub fn publish(&self, repo_root: &std::path::Path, tree: &str) -> std::io::Result<PathBuf> {
+        use std::io::Write;
+
+        let dir = repo_root.join(RESULTS_DIR);
+        std::fs::create_dir_all(&dir)?;
+        let final_path = dir.join(format!("{tree}.jsonl"));
+
+        // "under a name no other process can predict" — the pid is not that,
+        // so the suffix is drawn from the OS. `O_CREAT|O_EXCL` is what makes
+        // the unpredictability load-bearing: a name that was guessed and
+        // pre-created makes this fail rather than write through a symlink.
+        let temp = dir.join(format!(".{}.tmp", unpredictable_suffix()?));
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp)?;
+        let write = file
+            .write_all(&self.to_bytes())
+            .and_then(|()| file.sync_all())
+            .and_then(|()| std::fs::rename(&temp, &final_path));
+        if write.is_err() {
+            // A temp file left behind would be a second artifact in the
+            // directory the trusted stage reads.
+            let _ = std::fs::remove_file(&temp);
+        }
+        write?;
+        Ok(final_path)
+    }
+
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = String::new();
         out.push_str(&self.header.to_line());
@@ -932,5 +1001,39 @@ keys_visible=false profile=none ids=1\n{dup}\n{{\"status\":\"complete\",\"t\":\"
             Status::Complete,
         );
         assert!(empty_but_complete.floor_holds());
+    }
+    /// RF §7.1's probe removes the result directory at P1 limb (d), and on the
+    /// disposition-2 path — boundary failed, run continues — that succeeds. A
+    /// writer that assumed the directory survived step 6 would write nothing,
+    /// and `.spine/ci.sh` would report "nothing ran" over a run that ran
+    /// everything.
+    #[test]
+    fn publish_creates_the_result_directory_the_probe_may_have_removed() {
+        let root = std::env::temp_dir().join(format!("spine-publish-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+
+        let file = vector();
+        let path = file.publish(&root, "3e91c7a2").expect("published");
+        assert_eq!(path, root.join(".spine/cache/results/3e91c7a2.jsonl"));
+        assert_eq!(std::fs::read(&path).unwrap(), file.to_bytes());
+
+        // "A pre-existing file at the final path is overwritten without
+        // comment: nothing in this design may remember that a previous attempt
+        // happened."
+        std::fs::write(&path, b"stale\n").unwrap();
+        file.publish(&root, "3e91c7a2").expect("republished");
+        assert_eq!(std::fs::read(&path).unwrap(), file.to_bytes());
+
+        // And no temp file is left beside it — the trusted stage reads this
+        // directory and a second artifact in it is a second artifact.
+        let entries: Vec<_> = std::fs::read_dir(root.join(".spine/cache/results"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name())
+            .collect();
+        assert_eq!(entries.len(), 1, "{entries:?}");
+
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

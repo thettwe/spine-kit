@@ -86,6 +86,7 @@ pub mod ms {
     pub const RDONLY: u64 = 1;
     pub const NOSUID: u64 = 2;
     pub const NODEV: u64 = 4;
+    pub const NOEXEC: u64 = 8;
     pub const BIND: u64 = 0x1000;
     pub const REC: u64 = 0x4000;
     pub const PRIVATE: u64 = 1 << 18;
@@ -114,6 +115,47 @@ unsafe extern "C" {
     fn send(fd: c_int, buf: *const c_void, len: usize, flags: c_int) -> isize;
     fn recv(fd: c_int, buf: *mut c_void, len: usize, flags: c_int) -> isize;
     fn close(fd: c_int) -> c_int;
+    fn setgroups(size: usize, list: *const c_uint) -> c_int;
+    fn setresgid(rgid: c_uint, egid: c_uint, sgid: c_uint) -> c_int;
+    fn setresuid(ruid: c_uint, euid: c_uint, suid: c_uint) -> c_int;
+    fn setuid(uid: c_uint) -> c_int;
+}
+
+/// Drop to `id`, **irreversibly**, in this process, before `exec`.
+///
+/// RF §7.1's arrangement 2 is "a root collector that **drops privilege**", and
+/// the drop has to be one the child cannot undo. `map_as_root_collector` maps
+/// the collector's own root through so the child begins with the capability to
+/// drop at all; that same mapping is what a child could `setuid(0)` back into,
+/// and **P2 cannot see it** — P2 reads the ids after the drop, so a child that
+/// can return to host root still reports non-zero ids and still creates a file
+/// the host sees owned by `id`. It is the class of defect the probe is
+/// structurally unable to catch, so it has to be right by construction.
+///
+/// The order is the only safe one: supplementary groups first (they cannot be
+/// dropped once the uid is gone), then gid, then uid. All three of real,
+/// effective and saved are set on each, because a saved-set id left at 0 is
+/// exactly the door `setuid` walks back through.
+#[cfg(target_os = "linux")]
+pub fn drop_privileges_to(id: u32) -> std::io::Result<()> {
+    // SAFETY: three libc calls with no pointers but `setgroups`' empty list,
+    // whose length is 0 and which the kernel therefore never dereferences.
+    unsafe {
+        ok(setgroups(0, core::ptr::null()))?;
+        ok(setresgid(id, id, id))?;
+        ok(setresuid(id, id, id))?;
+    }
+    // Verified rather than assumed: the whole point is that this cannot be
+    // undone, and a kernel or seccomp policy that made one of the three a
+    // no-op would leave a boundary that measures as `container` and is not one.
+    // SAFETY: no pointers.
+    let regained = unsafe { setuid(0) } == 0;
+    if regained {
+        return Err(std::io::Error::other(
+            "the privilege drop is reversible: setuid(0) succeeded after it",
+        ));
+    }
+    Ok(())
 }
 
 /// `pivot_root(2)` has no libc wrapper on either shipped Linux target, so it is

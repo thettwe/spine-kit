@@ -138,3 +138,64 @@ membership of a changeset.
 `spine stats` *"counts promotions separately"*, which suggests the promoted
 commits stay identifiable — an argument for cherry-pick or merge over squash,
 but not a statement of one.
+
+## 6 · `result-file.md` §7.1 contradicts itself on P4(a)'s source
+
+**Where.** RF §7.1's fresh-namespace paragraph, parenthetically:
+
+> "(These flags must be read from a `sysfs` mounted **inside** the namespace or
+> over netlink; an inherited `sysfs` reports the job's own loopback, up, which
+> is the trap the paragraph below is about.)"
+
+And the paragraph it points at, which is explicitly normative:
+
+> "**P4(a) is read over netlink and never over `sysfs`, and this is normative
+> rather than an implementation note.** … The per-namespace `procfs` net files
+> (`/proc/net/dev`, `/proc/net/if_inet6`) have the same property and are a
+> conforming source; `sysfs` is not."
+
+RF §12 repeats the normative form: "P4(a)'s enumeration is normatively over
+**netlink** and never `sysfs`".
+
+**The consequence.** A builder who reads the parenthetical mounts a fresh
+`sysfs` inside the namespace and believes it conforming. It is not.
+
+**A narrower tension inside the same rule.** P4's table row fixes netlink
+*specifically* — "over netlink (`RTM_GETLINK`, `RTM_GETADDR`)" — while the
+normative paragraph admits `procfs` as an alternative source. Two conforming
+implementations could read different files.
+
+**What the implementation does.** Netlink, both dumps
+(`crates/spine-isolate/src/linux.rs`, `measure_egress`), which satisfies both
+readings of the normative paragraph and the table row.
+
+**The fix is to delete "a `sysfs` mounted inside the namespace or" from the
+parenthetical**, and to say whether the table row's netlink or the paragraph's
+netlink-or-procfs is the rule.
+
+## 7 · `import-resolver.md` §11.6's items are numbered 1, 2, 3, 4, 5, 4, 5, 6
+
+**Where.** IR §11.6's list restarts its numbering partway through, so there are
+two items numbered 4 and two numbered 5.
+
+**The consequence.** Every cross-reference by number is ambiguous.
+`crates/spine-resolve/src/ids.rs:96` already has to write "rule 4 (the second
+one so numbered)" to be unambiguous.
+
+**The fix is to renumber**, and until then every reference should quote the
+sentence rather than the number.
+
+## 8 · `import-resolver.md` §11.6 claims a terminal session-end event every adapter names, and names two of four
+
+**Where.** IR §11.6's last item: "**Every adapter names its terminal session-end
+event**", followed by "`dart-test`'s is the `done` event, `swift-test`'s is the
+final `Test Suite 'All tests' <verb> at …` line."
+
+**What is missing.** Neither §11.2 (pytest) nor §11.3 (vitest) names one.
+
+**The consequence.** RF §7.3 defines `complete` in terms of the terminal
+session-end event, so for two of the four shipped languages the status
+`complete` has no definition — and `complete` is the row that separates a run
+that finished from one that died part-way.
+
+**The fix is two sentences**, one in §11.2 and one in §11.3.
