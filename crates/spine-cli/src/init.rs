@@ -156,6 +156,33 @@ pub fn run(options: &Init) -> Result<u8> {
         template: "constitution@1".into(),
         content: seed.into_bytes(),
     }];
+    // The keyring, if a signing key was given.
+    //
+    // PB §11: "A first `init` with no signing key cannot produce a trust root
+    // and says so." So `--signer-key` is what makes a repository signable, and
+    // without it the seed is omitted rather than invented — `.spine/
+    // allowed_signers` is `user-owned`, seeded once and never touched again.
+    if let Some(path) = &options.signer_key {
+        match seed_keyring(path, options.identity.as_deref(), options.pipeline_key.as_deref()) {
+            Ok(bytes) => desired.push(Desired {
+                path: ".spine/allowed_signers".into(),
+                owner: Owner::UserOwned,
+                template: "keyring@1".into(),
+                content: bytes,
+            }),
+            Err(why) => {
+                eprintln!("spine init: {why}");
+                return Ok(exit::REFUSED);
+            }
+        }
+    } else if options.pipeline_key.is_some() {
+        eprintln!(
+            "spine init: --pipeline-key without --signer-key would seed a keyring with no \
+             signing key, which cannot produce a trust root (PB §11)"
+        );
+        return Ok(exit::REFUSED);
+    }
+
     // PB §11's three managed regions. Each is a block inside a file spine does
     // not own, located by its markers only.
     for (path, template, body) in spine_template::regions::V1_REGIONS {
@@ -391,6 +418,7 @@ fn owner_of(path: &str) -> Owner {
 fn template_of(path: &str) -> &'static str {
     match path {
         "CONSTITUTION.md" => "constitution@1",
+        ".spine/allowed_signers" => "keyring@1",
         "AGENTS.md#spine" => "agents-block@2",
         ".gitignore#spine" => "gitignore@1",
         ".gitattributes#spine" => "gitattributes@1",
@@ -431,6 +459,44 @@ fn detect_langs(root: &Path) -> Option<Vec<String>> {
     // MF §3.3: `params.langs` is sorted ascending by bytes and deduplicated.
     found.sort();
     (!found.is_empty()).then_some(found)
+}
+
+/// The `keyring@1` seed: `--signer-key`, optionally `--pipeline-key`.
+///
+/// PB §11 gives the principal exactly two sources and neither is a guess —
+/// `--identity` if given, else the key's own comment — so a key with neither
+/// refuses rather than being enrolled under a name nobody chose.
+///
+/// One call, not two, even when both flags are given. The namespace assignment
+/// is a function of the whole entry set (solo holds all three, team holds none
+/// of the seal), and computing it twice is what made `--signer-key A
+/// --pipeline-key C` and two separate runs seed different keyrings for one
+/// repository.
+fn seed_keyring(
+    signer_key: &str,
+    identity: Option<&str>,
+    pipeline_key: Option<&str>,
+) -> std::result::Result<Vec<u8>, String> {
+    use spine_template::keyring_seed::{Role, enrol, read_public_key, render_seed};
+
+    let read = |path: &str| -> std::result::Result<_, String> {
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| format!("cannot read {path}: {e}"))?;
+        read_public_key(&text).map_err(|e| format!("{path}: {e}"))
+    };
+
+    let mut entries = vec![
+        enrol(read(signer_key)?, identity, Role::Human).map_err(|e| e.to_string())?,
+    ];
+    if let Some(path) = pipeline_key {
+        // The pipeline key takes no `--identity`: that flag names the operator,
+        // and the seal principal is the trusted stage's.
+        entries.push(enrol(read(path)?, None, Role::Pipeline).map_err(|e| e.to_string())?);
+    }
+
+    render_seed(&entries)
+        .map(String::into_bytes)
+        .map_err(|e| e.to_string())
 }
 
 /// CI §3.1's per-provider path table, rendered.

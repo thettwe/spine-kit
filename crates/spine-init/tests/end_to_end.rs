@@ -366,4 +366,96 @@ mod with_a_release {
             );
         }
     }
+
+    /// The keyring seed, through real `ssh-keygen` keys.
+    ///
+    /// PB §11 and MF §4.5 are unconditional: in solo mode "the one principal
+    /// holds all three namespaces". A pipeline key does not change the mode —
+    /// mode is the distinct signoff fingerprint count — so it does not change
+    /// what the lone human holds. The opposite reading left a solo repository
+    /// unable to land ever again if its CI secret was lost, since PB §7.5's
+    /// recovery landing wants two distinct protected reviewers.
+    #[test]
+    fn the_keyring_seed_gives_a_solo_signer_all_three_namespaces() {
+        let Some(scratch) = Scratch::new("keyring") else {
+            return;
+        };
+        if !available() || build_kind(&scratch) != BuildKind::Release {
+            return;
+        }
+        for (name, comment) in [("alice", "alice@example.com"), ("ci", "ci@example.com")] {
+            let ok = Command::new("ssh-keygen")
+                .current_dir(&scratch.0)
+                .args(["-q", "-t", "ed25519", "-N", "", "-C", comment, "-f", name])
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if !ok {
+                return; // no ssh-keygen on this host
+            }
+        }
+
+        let run = |args: &[&str]| {
+            Command::new(spine())
+                .current_dir(&scratch.0)
+                .args(args)
+                .output()
+                .expect("spine runs")
+        };
+
+        // Solo, with the pipeline key in the same invocation.
+        let out = run(&[
+            "init", "--ci", "generic", "--signer-key", "alice.pub", "--pipeline-key", "ci.pub",
+        ]);
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+
+        let keyring = scratch.read(".spine/allowed_signers");
+        assert!(
+            keyring.contains(
+                "alice@example.com namespaces=\"spine-signoff@v1,spine-review@v1,spine-seal@v1\""
+            ),
+            "the one principal holds all three:\n{keyring}"
+        );
+        assert!(keyring.contains("ci@example.com namespaces=\"spine-seal@v1\""));
+
+        // And it lints clean under the reader the gates use.
+        let parsed = spine_manifest::Keyring::parse(keyring.as_bytes());
+        assert!(parsed.is_clean(), "{:?}", parsed.findings);
+        assert_eq!(parsed.mode, spine_manifest::Mode::Solo);
+    }
+
+    /// PB §11: "A first `init` with no signing key cannot produce a trust root
+    /// and says so." A pipeline key alone would seed exactly that — and it
+    /// lints clean, so the refusal cannot come from the lint.
+    #[test]
+    fn a_pipeline_key_without_a_signer_refuses() {
+        let Some(scratch) = Scratch::new("keyring-no-signer") else {
+            return;
+        };
+        if !available() || build_kind(&scratch) != BuildKind::Release {
+            return;
+        }
+        let ok = Command::new("ssh-keygen")
+            .current_dir(&scratch.0)
+            .args(["-q", "-t", "ed25519", "-N", "", "-C", "ci@example.com", "-f", "ci"])
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        if !ok {
+            return;
+        }
+
+        let out = Command::new(spine())
+            .current_dir(&scratch.0)
+            .args(["init", "--ci", "generic", "--pipeline-key", "ci.pub"])
+            .output()
+            .expect("spine runs");
+        assert_eq!(out.status.code(), Some(2));
+        assert!(
+            String::from_utf8_lossy(&out.stderr).contains("cannot produce a trust root"),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(!scratch.0.join(".spine").exists());
+    }
 }

@@ -120,6 +120,23 @@ pub enum SeedError {
     /// would be `keyring-multi-principal`; whitespace would split the line
     /// into different fields entirely.
     PrincipalMalformed(String),
+    /// A seed with no `spine-signoff@v1` key at all.
+    ///
+    /// PB §11: "A first `init` with no signing key cannot produce a trust root
+    /// and says so", and PB §7.5 makes the trust root the commit "which `spine
+    /// init` signs with a key inside it".
+    ///
+    /// Its own error because the lint cannot reach it: `mode` is
+    /// `signoff.len() == 1`, so zero signoff keys reads as `team`, and MF
+    /// §4.5's two team checks both pass on a seal-only keyring.
+    NoSigningKey,
+    /// [`append_pipeline_key`] was handed an entry that is not a pipeline key.
+    ///
+    /// The function writes `namespaces="spine-seal@v1"`, so accepting a
+    /// `Role::Human` entry enrols a person's key as the pipeline — the
+    /// human-holds-the-seal state MF §4.5's `keyring-seal-mixed` and PB §7.2
+    /// exist to refuse.
+    NotAPipelineKey,
     /// The bytes produced (or the bytes handed in) do not lint clean under
     /// MF §4.4. Carries the reader's own findings, so the caller reports the
     /// same status tokens G13 and G16 would.
@@ -143,6 +160,15 @@ impl fmt::Display for SeedError {
             SeedError::PrincipalMalformed(principal) => {
                 write!(f, "{principal:?} is not MF §4.2's principal production")
             }
+            SeedError::NoSigningKey => f.write_str(
+                "no signing key: a first `init` with none cannot produce a trust root \
+                 (PB §11), and the keyring lint cannot see it — zero signoff keys reads \
+                 as team mode, where a seal-only keyring passes both checks",
+            ),
+            SeedError::NotAPipelineKey => f.write_str(
+                "--pipeline-key was given a key enrolled as a human's: writing it under \
+                 spine-seal@v1 is the state keyring-seal-mixed exists to refuse",
+            ),
             // The lint tokens, in the order the reader sorted them, so the
             // message names the same statuses G13 and G16 would raise.
             SeedError::Keyring(findings) => {
@@ -266,9 +292,41 @@ pub fn render_seed(entries: &[SeedEntry]) -> Result<String, SeedError> {
         .collect();
     signoff.sort_unstable();
     signoff.dedup();
+    // PB §11 (:1029): "A first `init` with no signing key cannot produce a
+    // trust root and says so." PB §7.5 makes the trust root the commit "which
+    // `spine init` signs with a key inside it", so a keyring with no signoff
+    // key is a keyring nothing can sign the bootstrap with.
+    //
+    // It has to be refused HERE and cannot be caught by the lint, which is the
+    // stated invariant of this module: `mode` is `signoff.len() == 1`, so ZERO
+    // signoff keys reads as `team`, and MF §4.5's two team checks are
+    // `keyring-seal-mixed` and `keyring-no-seal` — a seal-only keyring passes
+    // both. The fail-open was exactly the shape the lint cannot see.
+    if signoff.is_empty() {
+        return Err(SeedError::NoSigningKey);
+    }
+
     let solo = signoff.len() == 1;
-    let has_pipeline = entries.iter().any(|e| e.role == Role::Pipeline);
-    let human_seals = solo && !has_pipeline;
+
+    // **Unconditional.** PB §11: "Solo mode = exactly one signoff key (`C-A1`),
+    // **whose principal then holds all three namespaces**." MF §4.5: "In
+    // **solo** mode the rule is inverted **by definition**: the one principal
+    // holds all three namespaces." Neither sentence has a condition.
+    //
+    // This read `solo && !has_pipeline` until 2026-08-28, and the extra
+    // conjunct did two kinds of damage. It contradicted the only two sentences
+    // in the corpus that state the rule; and because `append_pipeline_key`
+    // reaches the *other* end state from the same inputs, `spine init
+    // --signer-key A --pipeline-key C` and `--signer-key A` followed by
+    // `--pipeline-key C` produced **different keyrings for one repository** —
+    // both linting clean, so nothing downstream could catch it.
+    //
+    // The consequence on the one-shot path is the brick PB §7.2's "in solo
+    // mode, the human's own key" exists to prevent: lose the CI secret, and
+    // PB §7.5's recovery landing wants "one of two distinct protected
+    // reviewers" — a solo repository has one human, and that human no longer
+    // held `spine-seal@v1`. Nothing could land, ever again.
+    let human_seals = solo;
 
     let mut out = String::new();
     for role in [Role::Human, Role::Pipeline] {
@@ -318,6 +376,16 @@ pub fn render_seed(entries: &[SeedEntry]) -> Result<String, SeedError> {
 ///    call cannot fix it and must not bury it.
 pub fn append_pipeline_key(existing: &[u8], entry: &SeedEntry) -> Result<String, SeedError> {
     check_principal(&entry.principal)?;
+
+    // The role is carried on the entry and was validated nowhere: this function
+    // wrote `namespaces="spine-seal@v1"` for whatever it was handed, so
+    // `append_pipeline_key(k, &enrol(alice_key, .., Role::Human))` silently
+    // enrolled a human's key as the pipeline. In team mode that is the
+    // human-holds-the-seal state MF §4.5 and PB §7.2 spend a paragraph
+    // refusing, arrived at from inside rather than from a hand edit.
+    if entry.role != Role::Pipeline {
+        return Err(SeedError::NotAPipelineKey);
+    }
 
     // MF §4.2 admits only %x21-7E and WS in a line, so a non-UTF-8 byte cannot
     // sit in any of `blank`, `comment` or `entry` — it is
@@ -458,9 +526,25 @@ fn fingerprint_of(keytype: &str, keyblob: &str) -> Result<String, SeedError> {
 /// Remove `spine-seal@v1` from one line's `namespaces="…"` value, leaving every
 /// other byte of the line untouched.
 fn strip_seal(line: &str) -> String {
-    let Some(start) = line.find("namespaces=\"") else {
+    // Skip the principal before looking for the options field.
+    //
+    // MF §4.2's `principal := 1*( %x21-7E except "," and "#" and WS )` admits
+    // `"` and `=`, so a principal may legally spell `namespaces="` inside
+    // itself. `line.find` takes the FIRST occurrence, which for such a line is
+    // the principal's — and the splice then rewrites the identity instead of
+    // the option list, producing a line that names a different person.
+    //
+    // The options field begins after the first whitespace run, which is the
+    // same split the reader makes. A line with no second field has no options
+    // to strip.
+    let after_principal = match line.find([' ', '\t']) {
+        Some(index) => index,
+        None => return line.to_string(),
+    };
+    let Some(relative) = line[after_principal..].find("namespaces=\"") else {
         return line.to_string();
     };
+    let start = after_principal + relative;
     let value_start = start + "namespaces=\"".len();
     let Some(length) = line[value_start..].find('"') else {
         return line.to_string();
@@ -595,21 +679,135 @@ mod tests {
         assert_eq!(keyring.mode, Mode::Solo);
         assert_eq!(keyring.findings, Vec::new());
     }
-
-    /// The DERIVED half of the same rule: once a pipeline key exists it holds
-    /// the seal, and the human does not. Still solo — MF §4.5 counts signoff
-    /// fingerprints, and the seal-only line adds none.
+    /// PB §11 and MF §4.5, both unconditional: "Solo mode = exactly one signoff
+    /// key, **whose principal then holds all three namespaces**" / "In **solo**
+    /// mode the rule is inverted **by definition**."
+    ///
+    /// A pipeline key does not change the mode — mode is the distinct signoff
+    /// fingerprint count — so it does not change what the lone human holds.
+    /// This test asserted the opposite until 2026-08-28, on a reading taken
+    /// from PB §7.2's *justification* rather than from the two sentences that
+    /// state the rule.
     #[test]
-    fn a_lone_signer_beside_a_pipeline_key_does_not_hold_the_seal() {
-        let rendered =
-            render_seed(&[entry(ALICE, Role::Human), entry(CI, Role::Pipeline)]).unwrap();
+    fn a_lone_signer_holds_all_three_namespaces_beside_a_pipeline_key() {
+        let rendered = render_seed(&[entry(ALICE, Role::Human), entry(CI, Role::Pipeline)])
+            .expect("a conforming solo seed");
         assert!(
-            rendered.contains("alice@example.com namespaces=\"spine-signoff@v1,spine-review@v1\" ")
+            rendered.contains(
+                "alice@example.com namespaces=\"spine-signoff@v1,spine-review@v1,spine-seal@v1\" "
+            ),
+            "the one principal holds all three:\n{rendered}"
         );
         assert!(rendered.contains("ci@example.com namespaces=\"spine-seal@v1\" "));
+
+        // And it still lints clean: keyring-seal-mixed is evaluated ONLY in
+        // team mode (MF §4.5), which is what makes this legal rather than
+        // merely intended.
         let keyring = Keyring::parse(rendered.as_bytes());
+        assert!(keyring.is_clean(), "{:?}", keyring.findings);
         assert_eq!(keyring.mode, Mode::Solo);
-        assert_eq!(keyring.findings, Vec::new());
+    }
+
+    /// **The property the defect actually broke.** One-shot and two-step must
+    /// reach the same keyring for one repository, or `spine init --signer-key A
+    /// --pipeline-key C` and `--signer-key A` then `--pipeline-key C` seed two
+    /// different files — both linting clean, so nothing downstream catches it.
+    ///
+    /// The one-shot path was the dangerous one: it left the lone human without
+    /// `spine-seal@v1`, so a solo repository that lost its CI secret could
+    /// never land again — PB §7.5's recovery landing wants "one of two distinct
+    /// protected reviewers" and a solo repository has one human.
+    #[test]
+    fn one_shot_and_two_step_reach_the_same_keyring() {
+        let one_shot = render_seed(&[entry(ALICE, Role::Human), entry(CI, Role::Pipeline)])
+            .expect("solo, one shot");
+
+        let two_step = {
+            let seed = render_seed(&[entry(ALICE, Role::Human)]).expect("solo seed");
+            append_pipeline_key(seed.as_bytes(), &entry(CI, Role::Pipeline))
+                .expect("then the pipeline key")
+        };
+
+        assert_eq!(
+            one_shot, two_step,
+            "one repository, one keyring, whichever order the flags arrived in"
+        );
+    }
+
+    /// In team mode no human holds the seal, and a team keyring with no
+    /// pipeline key **cannot be seeded at all**.
+    ///
+    /// The second half is not a gap. PB §6.7: "G13 refuses a team-mode keyring
+    /// with no `spine-seal@v1` principal", because it "has nobody who can seal,
+    /// and every landing would be a recovery landing" (MF §4.5). So team mode
+    /// has exactly one bootstrap — with the pipeline key — and PB §6.7's other
+    /// path is the one it names: "a repo that starts **solo** and offline can
+    /// grow a remote and a pipeline without a second bootstrap".
+    #[test]
+    fn team_mode_seeds_only_with_a_pipeline_key_and_no_human_holds_the_seal() {
+        let team = render_seed(&[
+            entry(ALICE, Role::Human),
+            entry(BOB, Role::Human),
+            entry(CI, Role::Pipeline),
+        ])
+        .expect("team, with the pipeline key");
+
+        let keyring = Keyring::parse(team.as_bytes());
+        assert_eq!(keyring.mode, Mode::Team);
+        assert!(keyring.is_clean(), "{:?}", keyring.findings);
+        assert_eq!(keyring.fingerprints_under(SEAL).len(), 1);
+        for line in team.lines().filter(|l| !l.starts_with("ci@")) {
+            assert!(
+                !line.contains(SEAL),
+                "no human holds the seal in team mode: {line}"
+            );
+        }
+
+        // And without it, the seed refuses rather than producing a keyring
+        // nothing could ever seal.
+        let err = render_seed(&[entry(ALICE, Role::Human), entry(BOB, Role::Human)])
+            .expect_err("team mode with no seal principal");
+        match err {
+            SeedError::Keyring(findings) => {
+                assert!(findings.iter().any(|f| f.lint == Lint::KeyringNoSeal));
+            }
+            other => panic!("expected keyring-no-seal, got {other}"),
+        }
+    }
+
+    /// PB §11: "A first `init` with no signing key cannot produce a trust root
+    /// and says so." The lint cannot see this — zero signoff keys reads as team
+    /// mode, and a seal-only keyring passes both of MF §4.5's team checks — so
+    /// the refusal has to live here.
+    #[test]
+    fn a_seed_with_no_signing_key_is_refused() {
+        let err = render_seed(&[entry(CI, Role::Pipeline)])
+            .expect_err("a keyring nothing can sign the bootstrap with");
+        assert!(matches!(err, SeedError::NoSigningKey));
+
+        // The shape that made it invisible: it lints clean.
+        let seal_only = render_line("ci@example.com", &[SEAL], &entry(CI, Role::Pipeline).key);
+        let keyring = Keyring::parse(seal_only.as_bytes());
+        assert!(
+            keyring.is_clean(),
+            "which is exactly why render_seed must refuse it: {:?}",
+            keyring.findings
+        );
+    }
+
+    /// `append_pipeline_key` writes `namespaces="spine-seal@v1"` for whatever it
+    /// is handed, so it must refuse a human's key rather than enrol it as the
+    /// pipeline.
+    #[test]
+    fn append_pipeline_key_refuses_a_human_key() {
+        // A solo seed, which is the state PB §6.7's growth path starts from.
+        let seed = render_seed(&[entry(ALICE, Role::Human)]).unwrap();
+        let err = append_pipeline_key(seed.as_bytes(), &entry(BOB, Role::Human))
+            .expect_err("a human key is not a pipeline key");
+        assert!(matches!(err, SeedError::NotAPipelineKey));
+
+        // The pipeline key itself still appends.
+        assert!(append_pipeline_key(seed.as_bytes(), &entry(CI, Role::Pipeline)).is_ok());
     }
 
     /// PB §6.7: "G13 refuses a team-mode keyring with no `spine-seal@v1`
@@ -904,5 +1102,32 @@ mod tests {
             "three entry lines and nothing else"
         );
         assert_eq!(TEMPLATE, "keyring@1", "MF §8.3's files[] record");
+    }
+
+    /// MF §4.2's principal production admits `"` and `=`, so a principal may
+    /// legally spell `namespaces="` inside itself — and `find` takes the first
+    /// occurrence. Splicing there rewrites the **identity** rather than the
+    /// option list.
+    #[test]
+    fn strip_seal_edits_the_options_field_and_never_the_principal() {
+        let ordinary = "alice@example.com namespaces=\"spine-signoff@v1,spine-seal@v1\" ssh-ed25519 AAAA";
+        assert_eq!(
+            strip_seal(ordinary),
+            "alice@example.com namespaces=\"spine-signoff@v1\" ssh-ed25519 AAAA"
+        );
+
+        // A principal that spells the option name. Legal under §4.2: no comma,
+        // no `#`, no whitespace.
+        let adversarial =
+            "namespaces=\"x\"alice namespaces=\"spine-signoff@v1,spine-seal@v1\" ssh-ed25519 AAAA";
+        let stripped = strip_seal(adversarial);
+        assert!(
+            stripped.starts_with("namespaces=\"x\"alice "),
+            "the principal is untouched: {stripped}"
+        );
+        assert!(
+            stripped.contains("namespaces=\"spine-signoff@v1\" ssh-ed25519"),
+            "and the options field is the one edited: {stripped}"
+        );
     }
 }
