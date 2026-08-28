@@ -12,6 +12,7 @@ mod collect;
 mod index;
 mod init;
 mod new;
+mod sign;
 mod tty;
 
 use std::process::ExitCode;

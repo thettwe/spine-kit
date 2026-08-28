@@ -86,9 +86,13 @@ version = "0.0.0"
 dependencies = [
  "spine-canon",
  "spine-collect",
+ "spine-envelope",
  "spine-graph",
  "spine-init",
+ "spine-intent",
  "spine-manifest",
+ "spine-report",
+ "spine-resolve",
  "spine-runner",
  "spine-template",
 ]

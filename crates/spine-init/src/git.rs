@@ -364,6 +364,67 @@ impl Repo {
         run(&self.root, &["checkout", "--quiet", branch]).map(|_| ())
     }
 
+    /// `git rev-parse <rev>:<path>` — the blob id in a tree, never the
+    /// worktree's. ID §2.4: "The blob's, never the worktree's."
+    pub fn blob_id_at_head(&self, path: &str) -> Option<String> {
+        run(&self.root, &["rev-parse", &format!("HEAD:{path}")])
+            .ok()
+            .map(|s| s.trim_end().to_string())
+            .filter(|s| !s.is_empty())
+    }
+
+    /// How many commits on this branch, above trunk's merge base, carry a
+    /// given trailer name.
+    ///
+    /// PB §7.2: `reopens=` is "the count of signed reopens on the branch at
+    /// signing, so a sign-off cannot be replayed after a reopen". Counted over
+    /// the branch's own commits — an intent branch is created from trunk and
+    /// carries only its own events.
+    pub fn count_trailer_on_branch(&self, name: &str) -> Result<u64> {
+        let out = run(&self.root, &["log", "--format=%B%x00", "HEAD"])?;
+        let needle = format!("{name}: ");
+        Ok(out
+            .split('\0')
+            .filter(|m| m.lines().any(|l| l.starts_with(&needle)))
+            .count() as u64)
+    }
+
+    /// A signed, empty commit on the current branch — the transition PB §3.4
+    /// makes the one mandatory human gate.
+    ///
+    /// `commit-tree` over HEAD's own tree, so the commit changes nothing: the
+    /// statement is the transition, and signing must not move the intent blob
+    /// it names. `git commit --allow-empty` would work too and would run the
+    /// user's hooks and message cleanup over an envelope whose bytes are
+    /// signed — PB §5.5 uses `commit-tree` for a landing "so no cleanup rule
+    /// can touch the envelope's bytes", and the same reason holds here.
+    pub fn commit_empty(&self, message: &[u8]) -> Result<String> {
+        let head = run(&self.root, &["rev-parse", "HEAD"])?
+            .trim_end()
+            .to_string();
+        let tree = run(&self.root, &["rev-parse", "HEAD^{tree}"])?
+            .trim_end()
+            .to_string();
+        let file = self.root.join(".git/spine-commit-message");
+        std::fs::write(&file, message).map_err(|e| GitError::Unexpected(e.to_string()))?;
+        let sha = run(
+            &self.root,
+            &[
+                "commit-tree",
+                &tree,
+                "-p",
+                &head,
+                "-F",
+                file.to_str().unwrap_or_default(),
+            ],
+        )?
+        .trim_end()
+        .to_string();
+        let _ = std::fs::remove_file(&file);
+        run(&self.root, &["update-ref", "HEAD", &sha])?;
+        Ok(sha)
+    }
+
     /// `git cherry-pick <range>` — PB §11's promotion, commit by commit.
     ///
     /// Returns how many commits were replayed. A conflict aborts the pick and

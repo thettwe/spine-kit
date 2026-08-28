@@ -43,7 +43,9 @@ pub fn run(new: &New) -> ExitCode {
 
     let owed = match new {
         New::Create { variant, from } => return create(*variant, from.as_deref()),
-        New::Sign { .. } => "--sign",
+        New::Sign { id, override_lease } => {
+            return crate::sign::run(id, override_lease.as_deref());
+        }
         New::Reopen { .. } => "--reopen",
         New::Withdraw { .. } => "--withdraw",
     };

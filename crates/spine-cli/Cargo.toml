@@ -13,7 +13,11 @@ path = "src/main.rs"
 [dependencies]
 spine-canon = { path = "../spine-canon" }
 spine-manifest = { path = "../spine-manifest" }
+spine-envelope = { path = "../spine-envelope" }
 spine-graph = { path = "../spine-graph" }
+spine-intent = { path = "../spine-intent" }
+spine-report = { path = "../spine-report" }
+spine-resolve = { path = "../spine-resolve" }
 spine-collect = { path = "../spine-collect" }
 spine-init = { path = "../spine-init" }
 spine-runner = { path = "../spine-runner" }

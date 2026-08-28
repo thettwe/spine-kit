@@ -152,7 +152,19 @@ pub fn allocate(refs: &dyn Refs, variant: Variant) -> Result<String, AllocateErr
         None => 1,
         Some(n) => n.checked_add(1).ok_or(AllocateError::Exhausted)?,
     };
-    Ok(format!("{}{next}", prefix(variant)))
+    Ok(format!("{}{}", prefix(variant), numeral(next)))
+}
+
+/// ID §2's **canonical spelling**, which is the only one `IntentId::parse`
+/// admits: at least three digits, zero-padded below `100`, and never padded
+/// beyond three.
+///
+/// `INT-1` is **not an id**. It parses nowhere, so an allocator that emitted
+/// one produced a branch, a document path and a `Spine-Signoff` payload that
+/// every reader downstream refuses — which is what running `--sign` on a fresh
+/// intent found.
+fn numeral(n: u64) -> String {
+    format!("{n:03}")
 }
 
 /// TM §3.3: "`--bug` forces the prefix, and that is now checked as well as
@@ -207,7 +219,7 @@ mod tests {
         };
         assert_eq!(ledger(&refs), ["BUG-5", "INT-3", "INT-9"]);
         // And the next id clears all three, not just the live ones.
-        assert_eq!(allocate(&refs, Variant::Intent).unwrap(), "INT-10");
+        assert_eq!(allocate(&refs, Variant::Intent).unwrap(), "INT-010");
     }
 
     /// PB §5.4 names two ref patterns and no others.
@@ -237,8 +249,8 @@ mod tests {
             refs: vec!["refs/heads/intent/BUG-7".into()],
             ..Default::default()
         };
-        assert_eq!(allocate(&refs, Variant::Intent).unwrap(), "INT-8");
-        assert_eq!(allocate(&refs, Variant::Bug).unwrap(), "BUG-8");
+        assert_eq!(allocate(&refs, Variant::Intent).unwrap(), "INT-008");
+        assert_eq!(allocate(&refs, Variant::Bug).unwrap(), "BUG-008");
     }
 
     /// TM §3.3: "`--bug` forces the prefix". `--change` does not — it is a
@@ -246,9 +258,9 @@ mod tests {
     #[test]
     fn the_prefix_follows_the_variant() {
         let empty = Fake::default();
-        assert_eq!(allocate(&empty, Variant::Intent).unwrap(), "INT-1");
-        assert_eq!(allocate(&empty, Variant::Change).unwrap(), "INT-1");
-        assert_eq!(allocate(&empty, Variant::Bug).unwrap(), "BUG-1");
+        assert_eq!(allocate(&empty, Variant::Intent).unwrap(), "INT-001");
+        assert_eq!(allocate(&empty, Variant::Change).unwrap(), "INT-001");
+        assert_eq!(allocate(&empty, Variant::Bug).unwrap(), "BUG-001");
     }
 
     /// "refuses to allocate without that round-trip" — but only where there is
@@ -273,6 +285,39 @@ mod tests {
             ..Default::default()
         };
         assert!(allocate(&local_only, Variant::Intent).is_ok());
+    }
+
+    /// **The canonical spelling is the only one that parses.** ID §2 admits
+    /// `INT-042` and refuses `INT-42` (under-padded) and `INT-0042` (over-
+    /// padded), so an allocator that emitted `INT-1` produced a branch, a
+    /// document path and a `Spine-Signoff` payload every reader downstream
+    /// refuses. Found by running `--sign` on a freshly allocated intent.
+    #[test]
+    fn every_allocated_id_is_in_the_canonical_spelling() {
+        for (highest, expected) in ["INT-001", "INT-002", "INT-003"].into_iter().enumerate() {
+            let refs = Fake {
+                refs: (1..=highest)
+                    .map(|n| format!("refs/heads/intent/INT-{n:03}"))
+                    .collect(),
+                ..Default::default()
+            };
+            let id = allocate(&refs, Variant::Intent).unwrap();
+            assert_eq!(id, expected);
+            assert!(
+                spine_resolve::pragma::IntentId::parse(&id).is_some(),
+                "{id} is not a canonical intent id"
+            );
+        }
+
+        // Above 999 the padding stops rather than growing: `INT-0042` is
+        // over-padded and refused, so `INT-1000` is the spelling.
+        let refs = Fake {
+            refs: vec!["refs/heads/intent/INT-999".into()],
+            ..Default::default()
+        };
+        let id = allocate(&refs, Variant::Intent).unwrap();
+        assert_eq!(id, "INT-1000");
+        assert!(spine_resolve::pragma::IntentId::parse(&id).is_some());
     }
 
     /// A trailer is a whole line with the exact prefix. A document's own prose
@@ -309,6 +354,6 @@ mod tests {
             ],
             ..Default::default()
         };
-        assert_eq!(allocate(&refs, Variant::Intent).unwrap(), "INT-5");
+        assert_eq!(allocate(&refs, Variant::Intent).unwrap(), "INT-005");
     }
 }
