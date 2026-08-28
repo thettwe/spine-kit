@@ -162,9 +162,24 @@ pub fn decide<S>(gate: Gate, findings: Vec<Finding<S>>, reviews: &Reviews) -> Ve
     } else if findings.iter().any(|f| f.kind == FindingKind::Outright) {
         GateStatus::Fail
     } else if findings.iter().all(|f| {
+        // GR §5.6.1 limb (a): "every finding is covered by a signed review
+        // **whose class admits that wire**" — the wire's OWN class, not
+        // `protected` for everything.
+        //
+        // This read `reviews.protected_names(...)` until 2026-08-28, and the
+        // consequence was not marginal: the corpus's flagship published report
+        // is GR §8.2, whose `{"gate": "G2", "status": "override"}` is
+        // discharged by bob's **`class=tripwire`** review. Under the narrow
+        // reading that landing reads `fail` and refuses — the one worked
+        // example the whole document is built around could not land.
+        //
+        // PB §6's transition table is the other half: it discharges
+        // `landing-review` with a tripwire review, so requiring `protected`
+        // everywhere makes the tripwire lane unreachable and every tripwire
+        // landing an escalation.
         f.wire
             .as_ref()
-            .is_some_and(|w| reviews.protected_names(&w.token()))
+            .is_some_and(|w| reviews.admits(w.class, &w.token()))
     }) {
         GateStatus::Override
     } else {
@@ -299,5 +314,75 @@ mod tests {
         assert!(!GateStatus::Fail.seals());
         assert!(GateStatus::Pass.seals());
         assert!(GateStatus::Override.seals());
+    }
+
+    /// GR §8.2's flagship published report, as a discharge question.
+    ///
+    /// Its sealed value is `{"gate": "G2", "status": "override"}`, and the
+    /// review discharging it is bob's **`class=tripwire`**. Requiring a
+    /// `class=protected` review for every wire made that landing read `fail`
+    /// and refuse — the one worked example the whole document is built around
+    /// could not land.
+    ///
+    /// PB §6's transition table is the other half: it discharges
+    /// `landing-review` with a tripwire review, so the narrow reading also made
+    /// the tripwire lane unreachable and every tripwire landing an escalation.
+    #[test]
+    fn a_tripwire_wire_is_discharged_by_a_tripwire_review() {
+        let wire = Wire::at(Gate::G2, &b"src/shared/util.ts"[..], WireClass::Tripwire, WireKind::Finding);
+        let token = wire.token();
+        let findings = vec![Finding::coverable((), wire)];
+
+        let tripwire = Reviews::new(vec![
+            Review::new(ReviewClass::Tripwire, "SHA256:bob").naming([token.clone()]),
+        ]);
+        assert_eq!(
+            decide(Gate::G2, findings.clone(), &tripwire).status,
+            GateStatus::Override,
+            "GR §5.6.1 limb (a): a review whose class admits that wire"
+        );
+
+        // A protected review is the stronger statement and covers it too —
+        // PB §5.2's tiers are ordered.
+        let protected = Reviews::new(vec![
+            Review::new(ReviewClass::Protected, "SHA256:bob").naming([token.clone()]),
+        ]);
+        assert_eq!(
+            decide(Gate::G2, findings.clone(), &protected).status,
+            GateStatus::Override
+        );
+
+        // And a review naming nothing discharges nothing.
+        assert_eq!(
+            decide(Gate::G2, findings, &Reviews::default()).status,
+            GateStatus::Fail
+        );
+    }
+
+    /// The relation does not run the other way. A `class=protected` wire is
+    /// the floor's, and a tripwire review is not the statement PB §7.3 asks
+    /// for — "a protected review" — so it must not discharge one.
+    #[test]
+    fn a_tripwire_review_does_not_discharge_a_protected_wire() {
+        let wire = Wire::at(Gate::G14, &b".spine/ci.sh"[..], WireClass::Protected, WireKind::Finding);
+        let token = wire.token();
+        let findings = vec![Finding::coverable((), wire)];
+
+        let tripwire = Reviews::new(vec![
+            Review::new(ReviewClass::Tripwire, "SHA256:bob").naming([token.clone()]),
+        ]);
+        assert_eq!(
+            decide(Gate::G14, findings.clone(), &tripwire).status,
+            GateStatus::Fail,
+            "a floor change takes a protected review, not a tripwire one"
+        );
+
+        let protected = Reviews::new(vec![
+            Review::new(ReviewClass::Protected, "SHA256:bob").naming([token]),
+        ]);
+        assert_eq!(
+            decide(Gate::G14, findings, &protected).status,
+            GateStatus::Override
+        );
     }
 }

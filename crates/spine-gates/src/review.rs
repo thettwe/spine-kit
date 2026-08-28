@@ -141,6 +141,33 @@ impl Reviews {
         self.of_class(ReviewClass::Protected).any(|r| r.names(token))
     }
 
+    /// GR §5.6.1 limb (a): is this wire "covered by a signed review **whose
+    /// class admits that wire**"?
+    ///
+    /// The admitting relation is not equality and not "protected covers
+    /// everything". PB §5.2's tiers are ordered — a `class=protected` review is
+    /// the stronger statement and covers a `tripwire` wire, while a tripwire
+    /// review does not reach a protected one. So:
+    ///
+    /// | wire class | admitted by |
+    /// |---|---|
+    /// | `tripwire`  | a `tripwire` **or** a `protected` review |
+    /// | `protected` | a `protected` review only |
+    ///
+    /// `break-glass` is not a wire class here: GR §5.6.1 gives it limb (b),
+    /// which reaches a gate that produced no finding at all and is applied by
+    /// [`Verdict::with_break_glass`] rather than through this relation.
+    pub fn admits(&self, class: crate::wire::WireClass, token: &str) -> bool {
+        use crate::wire::WireClass;
+        match class {
+            WireClass::Tripwire => self
+                .of_class(ReviewClass::Tripwire)
+                .chain(self.of_class(ReviewClass::Protected))
+                .any(|r| r.names(token)),
+            WireClass::Protected => self.protected_names(token),
+        }
+    }
+
     /// GR §5.6.1 limb (b): a `class=break-glass` review naming the gate, "among
     /// the eight gates PB §7.6 permits it to bypass".
     ///
