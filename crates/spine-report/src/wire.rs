@@ -54,10 +54,26 @@ impl Wire {
     }
 
     /// A path-bearing wire. Takes bytes, because that is what a path is.
+    ///
+    /// **An empty path is no path**, and this is where that is settled rather
+    /// than at each caller. GR §6.3's G1 row: "**Bare `G1`** for the five
+    /// findings that name no path … **and for any per-id finding whose `path`
+    /// is the empty string, an empty path being no path**." RF §4.4 emits the
+    /// empty string where no tree entry matches the runner's reported path, so
+    /// the case arrives from real collector output rather than from a mistake.
+    ///
+    /// Left alone it serialized `"path":""` and rendered `G1:` — a token no
+    /// conforming implementation writes, so the review a human signed naming
+    /// `G1` would not contain it and the landing would be refused over a
+    /// spelling.
     pub fn at(gate: Gate, path: impl Into<Vec<u8>>, class: WireClass, kind: WireKind) -> Self {
+        let path = path.into();
+        if path.is_empty() {
+            return Wire::bare(gate, class, kind);
+        }
         Wire {
             gate,
-            path: Some(path.into()),
+            path: Some(path),
             class,
             kind,
         }
@@ -161,7 +177,33 @@ impl WireSet {
                     collapsed.insert(key, wire);
                 }
                 Some(existing) => {
-                    if existing.kind != wire.kind {
+                    // GR §6.1: "the surviving `kind` is the strongest of
+                    // `finding` > `advisory` > `warn`." Refusing every
+                    // differing pair made `strongest` unreachable — the line
+                    // below ran only where the two kinds were already equal —
+                    // and refused a collapse the corpus resolves.
+                    //
+                    // `warn` + `finding` on one key is reachable in v1 and not
+                    // a corner case: GR §6.3's G2 row raises "one entry per
+                    // diff path outside the declared `expected` set, **per
+                    // `forbidden` hit**", and its kind is "`warn` under
+                    // warn-before-block calibration, `finding` otherwise; **a
+                    // `forbidden` hit is `finding` in every mode**". A path in
+                    // `forbidden` and outside `expected`, in a repository
+                    // under calibration, is one key and two kinds.
+                    //
+                    // The one pair still refused is the one GR §6.1 says
+                    // cannot arise: "**The collapse can never merge an
+                    // advisory into a finding.** … in v1 the only
+                    // advisory-bearing gate is `G11`, and `G11` raises no
+                    // findings, so every collapse is between two entries of
+                    // the same kind." That paragraph then makes the refusal
+                    // this crate's obligation rather than its choice: "A later
+                    // version that gives some gate both a finding and an
+                    // advisory **must say how they are told apart before it
+                    // may rely on this rule**." Silently promoting would be
+                    // relying on it.
+                    if existing.kind.merges_advisory_into_finding(wire.kind) {
                         return Err(WireSetError::CrossKindCollapse {
                             token: wire.token(),
                             first: existing.kind,
@@ -432,6 +474,8 @@ mod tests {
     fn containment_covers_every_kind_and_admits_a_larger_review() {
         let set = WireSet::from_raised([
             Wire::bare(Gate::G11, WireClass::Tripwire, WireKind::Advisory),
+            // An empty path is no path (GR §6.3's G1 row), so this is the
+            // bare `G3` its own row calls for and not `G3:`.
             Wire::at(Gate::G3, [], WireClass::Tripwire, WireKind::Warn),
             tripwire_finding(Gate::G2, "src/shared/util.ts"),
         ])
@@ -441,7 +485,68 @@ mod tests {
 
         let short: BTreeSet<String> = ["G11".to_owned()].into_iter().collect();
         assert!(!set.contained_in(&short));
-        assert_eq!(set.uncovered(&short), vec!["G2:src/shared/util.ts", "G3:"]);
+        assert_eq!(set.uncovered(&short), vec!["G2:src/shared/util.ts", "G3"]);
+    }
+
+    /// GR §6.1's kind precedence, on the pair v1 can actually produce: a path
+    /// in `forbidden` and outside `expected`, in a repository under
+    /// warn-before-block calibration. GR §6.3's G2 row raises both, and "a
+    /// `forbidden` hit is `finding` in every mode".
+    #[test]
+    fn a_warn_and_a_finding_on_one_key_collapse_to_the_finding() {
+        let set = WireSet::from_raised([
+            Wire::at(
+                Gate::G2,
+                "src/secret/key.ts",
+                WireClass::Tripwire,
+                WireKind::Warn,
+            ),
+            Wire::at(
+                Gate::G2,
+                "src/secret/key.ts",
+                WireClass::Protected,
+                WireKind::Finding,
+            ),
+        ])
+        .expect("GR §6.1 resolves this collapse; it does not refuse it");
+        assert_eq!(set.as_slice().len(), 1);
+        assert_eq!(set.as_slice()[0].kind, WireKind::Finding);
+        // "the surviving `class` is `"protected"` if either was".
+        assert_eq!(set.as_slice()[0].class, WireClass::Protected);
+    }
+
+    /// The one pair still refused, and GR §6.1 is why: "A later version that
+    /// gives some gate both a finding and an advisory must say how they are
+    /// told apart before it may rely on this rule."
+    #[test]
+    fn an_advisory_and_a_finding_on_one_key_are_refused_and_not_resolved() {
+        assert!(matches!(
+            WireSet::from_raised([
+                Wire::bare(Gate::G11, WireClass::Tripwire, WireKind::Advisory),
+                Wire::bare(Gate::G11, WireClass::Protected, WireKind::Finding),
+            ]),
+            Err(WireSetError::CrossKindCollapse { .. })
+        ));
+    }
+
+    /// GR §6.3's G1 row: "for any per-id finding whose `path` is the empty
+    /// string, an empty path being no path". RF §4.4 emits exactly that where
+    /// no tree entry matches the runner's reported path.
+    #[test]
+    fn an_empty_path_is_no_path_and_not_a_colon() {
+        let wire = Wire::at(Gate::G1, "", WireClass::Protected, WireKind::Finding);
+        assert_eq!(wire.token(), "G1");
+        assert!(wire.path.is_none());
+
+        // And it therefore collapses onto the bare entry of the same gate,
+        // rather than sitting beside it under a key of its own.
+        let set = WireSet::from_raised([
+            Wire::bare(Gate::G1, WireClass::Tripwire, WireKind::Finding),
+            Wire::at(Gate::G1, "", WireClass::Protected, WireKind::Finding),
+        ])
+        .unwrap();
+        assert_eq!(set.tokens(), ["G1"]);
+        assert_eq!(set.as_slice()[0].class, WireClass::Protected);
     }
 
     /// GR §6.1's `spine stats` predicate — a function of the array and nothing

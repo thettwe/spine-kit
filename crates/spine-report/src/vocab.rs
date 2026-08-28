@@ -298,6 +298,25 @@ impl WireKind {
         }
     }
 
+    /// The one collapse GR §6.1 says cannot arise, and which this crate must
+    /// refuse rather than resolve: "A later version that gives some gate both
+    /// a finding and an advisory must say how they are told apart before it
+    /// may rely on this rule."
+    ///
+    /// `warn` against either is not this pair. GR §6.1's carve-out names the
+    /// advisory case and only the advisory case, and its argument — the
+    /// v0.18 respelling that moved the rule-5 wire off `G1` — is about a
+    /// signature over `wires=G1` meaning either "a human accepted that
+    /// auto-merge is unavailable" or "a human accepted a failing test". A
+    /// `warn` and a `finding` over one path are two readings of one condition
+    /// under one calibration, not two claims.
+    pub const fn merges_advisory_into_finding(self, other: Self) -> bool {
+        matches!(
+            (self, other),
+            (WireKind::Advisory, WireKind::Finding) | (WireKind::Finding, WireKind::Advisory)
+        )
+    }
+
     pub const fn strongest(self, other: Self) -> Self {
         if other.strength() > self.strength() {
             other
