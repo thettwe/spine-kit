@@ -485,6 +485,125 @@ impl Repo {
         Ok(None)
     }
 
+    /// Every path in a tree, recursively, as `(mode, oid, path)`.
+    ///
+    /// `-z` so paths are raw: `git ls-tree` C-quotes a path containing a quote,
+    /// a backslash or a control byte otherwise, which is a fourth encoding of
+    /// one path and not one any caller here wants.
+    pub fn ls_tree_all(&self, commit: &str) -> Result<Vec<(String, String, String)>> {
+        let out = run(&self.root, &["ls-tree", "-r", "-z", commit])?;
+        let mut entries = Vec::new();
+        for record in out.split('\0').filter(|e| !e.is_empty()) {
+            let Some((meta, path)) = record.split_once('\t') else {
+                continue;
+            };
+            let fields: Vec<&str> = meta.split_whitespace().collect();
+            if let [mode, _kind, oid] = fields.as_slice() {
+                entries.push(((*mode).to_string(), (*oid).to_string(), path.to_string()));
+            }
+        }
+        Ok(entries)
+    }
+
+    /// PB §6.3's G12 tree: the approval tree **with the intent's `expected`
+    /// paths restored to base**.
+    ///
+    /// > "`red=k/n` recorded at `--approve`, measured with the intent's
+    /// > `expected` paths restored to base"
+    ///
+    /// This is what makes the number mean anything. The frozen tests are run
+    /// against trunk's code, not the candidate's, so `red` counts tests that
+    /// fail *because the feature is absent* rather than tests that pass because
+    /// the implementation is already there. PB §5.2 says the same from the
+    /// other side for a promoted quick branch: "G12 measures red with
+    /// `expected` restored to base, so the promoted code is invisible to it".
+    ///
+    /// Restoration is in both directions, and the second is the one an
+    /// implementation forgets: a path the branch **added** under `expected` is
+    /// removed, not merely left alone, because a new module the tests import is
+    /// exactly the implementation G12 must not see.
+    ///
+    /// Returns the written tree's oid. Nothing is checked out and no ref moves.
+    pub fn restored_base_tree(
+        &self,
+        approval: &str,
+        base: &str,
+        is_expected: &dyn Fn(&str) -> bool,
+    ) -> Result<String> {
+        let index = self.root.join(".git/spine-g12-index");
+        let _ = std::fs::remove_file(&index);
+        let with_index = |args: &[&str]| -> Result<String> {
+            let out = std::process::Command::new("git")
+                .current_dir(&self.root)
+                .env("GIT_INDEX_FILE", &index)
+                .args(args)
+                .output()
+                .map_err(|e| GitError::NotAvailable(e.to_string()))?;
+            if out.status.success() {
+                Ok(String::from_utf8_lossy(&out.stdout).into_owned())
+            } else {
+                Err(GitError::Failed {
+                    argv: args.join(" "),
+                    stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+                })
+            }
+        };
+
+        with_index(&["read-tree", approval])?;
+
+        let in_base: std::collections::BTreeMap<String, (String, String)> = self
+            .ls_tree_all(base)?
+            .into_iter()
+            .map(|(mode, oid, path)| (path, (mode, oid)))
+            .collect();
+        let in_approval: std::collections::BTreeSet<String> = self
+            .ls_tree_all(approval)?
+            .into_iter()
+            .map(|(_, _, path)| path)
+            .collect();
+
+        // Every expected path either tree has.
+        let mut touched: std::collections::BTreeSet<&str> = std::collections::BTreeSet::new();
+        touched.extend(
+            in_base
+                .keys()
+                .map(String::as_str)
+                .filter(|p| is_expected(p)),
+        );
+        touched.extend(
+            in_approval
+                .iter()
+                .map(String::as_str)
+                .filter(|p| is_expected(p)),
+        );
+
+        for path in touched {
+            match in_base.get(path) {
+                Some((mode, oid)) => {
+                    // `--add` because the path may not be in the index at all:
+                    // a path the branch **deleted** under `expected` has to
+                    // come back, and without it `update-index` refuses with
+                    // "cannot add to the index - missing --add option?".
+                    // Restoration is to base's tree, not a merge of the two.
+                    with_index(&[
+                        "update-index",
+                        "--add",
+                        "--cacheinfo",
+                        &format!("{mode},{oid},{path}"),
+                    ])?;
+                }
+                // Absent at base: the branch added it, and G12 must not see it.
+                None => {
+                    with_index(&["update-index", "--force-remove", path])?;
+                }
+            }
+        }
+
+        let tree = with_index(&["write-tree"])?.trim_end().to_string();
+        let _ = std::fs::remove_file(&index);
+        Ok(tree)
+    }
+
     /// `git cherry-pick <range>` — PB §11's promotion, commit by commit.
     ///
     /// Returns how many commits were replayed. A conflict aborts the pick and

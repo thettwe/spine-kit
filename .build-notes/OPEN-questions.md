@@ -251,3 +251,32 @@ syntactic reading and that a disagreement is `base-moved` by design; or have
 `.spine/ci.sh` pass the trusted stage's `B` to the collector, which the
 invocation contract (CI §5.1, digest-pinned) does not currently do — and which
 would also close the `T`-computed-twice skew this document's neighbours note.
+
+## 10 · `--approve` must record a `reason=` and PB §11's signature gives it no flag
+
+**Where.** PB §6.3's G12 row: *"`k = 0` is a wire at **approval** (a human
+signs with a reason)"*. PB §11's `Spine-Approve` payload: *"`reason=` is
+mandatory, and G13 refuses its absence, on `red=0/n`, `held=false`, or a
+closure tripwire"*. PB §4.3, on the closure tripwire: *"Signing past the
+tripwire instead is permitted and records `reason=` (mandatory; G13 refuses its
+absence)"*. And PB §11's state table: *"`--approve` refuses without a human
+reason"*.
+
+**The gap.** PB §11's signature is
+`spine check [--ci] … [--approve <id>] …` — there is no `--reason`. Every other
+command that records one has a flag for it: `spine new --reopen <id> --reason
+"…"`, `--withdraw <id> --reason "…"`, `--break-glass "<reason>"`.
+
+**The consequence.** All three conditions that make `reason=` mandatory are
+reachable on an ordinary approval — `red=0/n` whenever the tests do not fail,
+`held=false` at the loop cap, a closure tripwire whenever a frozen test imports
+a branch-created module inside `expected`. In each, `--approve` must write a
+line it has no way to obtain the value for, so it can only refuse, and the
+state table's `approval-review → tests-approved` transition ("human signs the
+approval with a reason") has no invocation.
+
+**What the implementation does.** Refuses, naming which of the three
+conditions fired, rather than inventing a reason on the operator's behalf.
+
+**The fix is one flag** in PB §11's signature: `[--approve <id> [--reason
+"…"]]`, matching the three commands that already have one.
