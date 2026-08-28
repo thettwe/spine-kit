@@ -241,27 +241,28 @@ impl WireSet {
     /// GR §6.1's counter predicate, "derived at read time and never stored":
     /// it "holds iff some entry has `gate == \"G7\"` and `class ==
     /// \"protected\"`, and no other entry has `class == \"protected\"`."
-    /// **Exactly one**, per the headline phrase it makes mechanical:
-    /// "landings whose only `class: \"protected\"` entry is a `G7` hard
-    /// lease". Two protected `G7` entries do not hold it, because the second
-    /// is an "other entry" with `class == \"protected\"` — the predicate is
-    /// literal, and the sentence it serves says *only entry*, singular.
-    ///
-    /// DERIVED: the counter exists so that "one intent quietly taxing every
-    /// other landing becomes visible", and one intent leasing two paths is
-    /// that same phenomenon — under this reading it counts as zero. The
-    /// counter is read-time, in no digest and read by no gate, so following
-    /// the literal text costs a stats number and nothing else. Recorded in
-    /// `.build-notes/OPEN-questions.md`.
+    /// **Two `G7` leases hold it.** The owner ruled on 2026-08-28 that "no
+    /// **other** entry has `class == \"protected\"`" reads as "no entry whose
+    /// `gate` is not `\"G7\"`", and GR §6.1 now says so: one intent leasing two
+    /// paths is the same phenomenon as one leasing one, and it is the
+    /// phenomenon the counter exists to make visible. The literal reading
+    /// counted that landing as zero, which is the opposite of what the sentence
+    /// it serves asks for — "one intent quietly taxing every other landing
+    /// becomes visible rather than mysterious".
     pub fn only_protected_is_a_g7_hard_lease(&self) -> bool {
-        let mut protected = self
+        let mut saw_g7 = false;
+        for wire in self
             .entries
             .iter()
-            .filter(|w| w.class == WireClass::Protected);
-        let Some(first) = protected.next() else {
-            return false;
-        };
-        first.gate == Gate::G7 && protected.next().is_none()
+            .filter(|w| w.class == WireClass::Protected)
+        {
+            if wire.gate == Gate::G7 {
+                saw_g7 = true;
+            } else {
+                return false;
+            }
+        }
+        saw_g7
     }
 }
 
@@ -447,10 +448,11 @@ mod tests {
         assert!(!set.only_protected_is_a_g7_hard_lease());
     }
 
-    /// GR §6.1's "**no other** entry has `class == \"protected\"`", taken at
-    /// its word: a second `G7` lease is an other entry.
+    /// GR §6.1, as the owner ruled it on 2026-08-28: "no entry whose `gate` is
+    /// not `\"G7\"`". One intent leasing two paths is the phenomenon the
+    /// counter exists for, and the earlier literal reading counted it as zero.
     #[test]
-    fn two_protected_g7_leases_are_not_the_counters_shape() {
+    fn two_protected_g7_leases_still_hold_the_counter() {
         let mut set = WireSet::new();
         set.insert(Wire::at(
             Gate::G7,
@@ -462,6 +464,18 @@ mod tests {
         set.insert(Wire::at(
             Gate::G7,
             "src/b.ts",
+            WireClass::Protected,
+            WireKind::Finding,
+        ));
+        assert!(
+            set.only_protected_is_a_g7_hard_lease(),
+            "two leases from one intent are still one intent's tax"
+        );
+
+        // A protected entry from any other gate still ends it.
+        set.insert(Wire::at(
+            Gate::G14,
+            "CODEOWNERS",
             WireClass::Protected,
             WireKind::Finding,
         ));

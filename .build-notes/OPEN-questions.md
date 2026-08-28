@@ -3,6 +3,27 @@
 Filed rather than decided. Each names what is at stake and what the
 implementation does in the meantime.
 
+
+> **All nine were ruled by the owner on 2026-08-28** and the corpus now carries
+> every answer; `docs/spec/README.md` has the table. This file is kept as the
+> record of what the build found and what was decided, not as a queue.
+>
+> | # | Ruling | Landed in |
+> |---|---|---|
+> | 1 | Admit YAML's `''` and `\"` | IR §6.3 step 2 · `spine-resolve` |
+> | 2 | Widen §4.1's Python anchor to reach `try: import x` | IR §4.1 · code already conformed |
+> | 3 | The `sha256:` prefix is written once | RF §8.3 · code already conformed |
+> | 4 | Two `G7` leases hold the counter | GR §6.1 · `spine-gates` |
+> | 5 | `--from` cherry-picks `merge-base..<branch>` | PB §11 · `spine-cli` |
+> | 6 | P4(a) is netlink; the `sysfs` parenthetical is struck | RF §7.1 · code already conformed |
+> | 7 | §11.6 renumbered 1–8 | IR §11.6 |
+> | 8 | `pytest_sessionfinish` is pytest's terminal event; vitest's is still owed | IR §11.6 · `spine-runner` |
+> | 9 | The collector takes the syntactic reading of a reseal's `base=` | RF §4.2 · code already conformed |
+>
+> **One thing is still open and is not in the table:** `vitest`'s terminal
+> session-end event. IR §11.3 owes it before that adapter ships, and until then
+> `complete` has no definition for a TypeScript suite.
+
 ## 1 · Does the Dart declarative subset admit YAML's own quote escapes?
 
 **Where.** `import-resolver.md` §6.3 step 2: the pubspec is read as "block

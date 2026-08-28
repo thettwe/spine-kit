@@ -240,24 +240,78 @@ fn plain(text: &str) -> Option<Yaml> {
     }
 }
 
+/// A quoted scalar, with **YAML's own escapes read** — the owner's ruling of
+/// 2026-08-28, now IR §6.3 step 2.
+///
+/// Inside a single-quoted scalar `''` is one literal `'` and there is no
+/// backslash escape at all; inside a double-quoted scalar `\"` is one literal
+/// `"` and `\\` one literal backslash. They are part of the scalar forms the
+/// subset already admits and are not one of its excluded constructs.
+///
+/// **Refusing them was measured against the consequence.** A refused pubspec is
+/// `pubspec-not-declarative`, which is `lang-unclassifiable`, and under IR §3.8's
+/// language level every Dart file in the repository then contributes no edges —
+/// so one apostrophe in a `description:` blocked every Dart landing in that
+/// repository, permanently, until a human noticed and rewrote the line. That is
+/// the blast radius of the `#`-inside-quotes defect this crate already fixed,
+/// reached by a different route.
 fn unquote(text: &str) -> Option<String> {
     let text = text.trim();
-    for quote in ['\'', '"'] {
-        if text.len() >= 2 && text.starts_with(quote) && text.ends_with(quote) {
-            let inner = &text[1..text.len() - 1];
-            if inner.contains(quote) {
-                // An escaped or doubled quote is outside the subset; refusing
-                // is cheaper than deciding which of YAML's two escape dialects
-                // applies.
-                return None;
-            }
-            return Some(inner.to_string());
-        }
+    if text.len() >= 2 && text.starts_with('\'') && text.ends_with('\'') {
+        return unescape_single(&text[1..text.len() - 1]);
+    }
+    if text.len() >= 2 && text.starts_with('"') && text.ends_with('"') {
+        return unescape_double(&text[1..text.len() - 1]);
     }
     if text.starts_with('\'') || text.starts_with('"') {
         return None;
     }
     Some(text.to_string())
+}
+
+/// `''` is one `'`. A lone `'` inside the body would have ended the scalar, so
+/// meeting one here is a scalar whose quotes do not balance.
+fn unescape_single(inner: &str) -> Option<String> {
+    let mut out = String::with_capacity(inner.len());
+    let mut rest = inner.chars().peekable();
+    while let Some(c) = rest.next() {
+        if c != '\'' {
+            out.push(c);
+            continue;
+        }
+        match rest.next() {
+            Some('\'') => out.push('\''),
+            _ => return None,
+        }
+    }
+    Some(out)
+}
+
+/// `\"` and `\\`. Every other escape YAML defines — `\n`, `\t`, `\u`,
+/// `\x` — is **not** admitted: the subset exists so a pubspec's scalars are
+/// read without a YAML engine, and a value carrying one of those is a value
+/// this reader would have to render rather than copy. Refusing them is the
+/// same fail-closed choice as before; what the ruling changed is the two that
+/// only let a quote sit inside its own quotes.
+fn unescape_double(inner: &str) -> Option<String> {
+    let mut out = String::with_capacity(inner.len());
+    let mut rest = inner.chars();
+    while let Some(c) = rest.next() {
+        if c != '\\' {
+            if c == '"' {
+                // An unescaped `"` would have ended the scalar.
+                return None;
+            }
+            out.push(c);
+            continue;
+        }
+        match rest.next() {
+            Some('"') => out.push('"'),
+            Some('\\') => out.push('\\'),
+            _ => return None,
+        }
+    }
+    Some(out)
 }
 
 #[cfg(test)]
@@ -361,23 +415,45 @@ mod tests {
         );
     }
 
-    /// A doubled single quote (`'it''s'`) is YAML's own escape and this
-    /// subset refuses it — deliberately, at `unquote`, "cheaper than deciding
-    /// which of YAML's two escape dialects applies". `strip_comment` handles it
-    /// correctly regardless, so the two decisions stay independent: a `#` after
-    /// a doubled quote is still inside the scalar.
+    /// A doubled single quote (`'it''s'`) is YAML's own escape, and the owner
+    /// ruled on 2026-08-28 that the subset **reads** it — IR §6.3 step 2. The
+    /// refusal it replaced made one apostrophe in a `description:` block every
+    /// Dart landing in the repository, permanently, under §3.8's language level.
     ///
-    /// Whether the refusal is right is a corpus question, not this function's:
-    /// IR §6.3 step 2's excluded list does not name it either way, and the
-    /// consequence — one apostrophe in a `description:` making every Dart
-    /// landing impossible under §3.8 — is filed in
-    /// `.build-notes/OPEN-questions.md`.
+    /// `strip_comment` handled it correctly all along, so the two decisions
+    /// stay independent: a `#` after a doubled quote is still inside the scalar.
     #[test]
-    fn a_doubled_quote_leaves_the_scalar_open_for_strip_comment() {
+    fn a_doubled_quote_is_read_and_leaves_the_scalar_open_for_strip_comment() {
         assert_eq!(
             strip_comment("name: 'it''s # fine'"),
             "name: 'it''s # fine'"
         );
+
+        let yaml = parse("description: 'it''s useful'\n").expect("a valid pubspec scalar");
+        assert_eq!(
+            yaml.get("description").unwrap().as_scalar(),
+            Some("it's useful")
+        );
+    }
+
+    /// The double-quoted half, and the line the ruling did **not** move: the
+    /// two escapes that let a quote sit inside its own quotes are read, and
+    /// every escape that would have to be *rendered* — `\n`, `\t`, `\u` —
+    /// is still outside the subset, because the subset exists so a pubspec is
+    /// read without a YAML engine.
+    #[test]
+    fn double_quoted_escapes_are_the_two_that_need_no_rendering() {
+        let yaml = parse(r#"description: "say \"hi\"""#).expect("a valid scalar");
+        assert_eq!(
+            yaml.get("description").unwrap().as_scalar(),
+            Some(r#"say "hi""#)
+        );
+
+        let yaml = parse(r#"description: "a\\b""#).expect("a valid scalar");
+        assert_eq!(yaml.get("description").unwrap().as_scalar(), Some(r"a\b"));
+
+        // Still refused, and deliberately.
+        assert!(parse(r#"description: "line\nbreak""#).is_none());
     }
 
     /// A comment after a quoted scalar still opens, so the fix did not close

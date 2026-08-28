@@ -364,6 +364,29 @@ impl Repo {
         run(&self.root, &["checkout", "--quiet", branch]).map(|_| ())
     }
 
+    /// `git cherry-pick <range>` — PB §11's promotion, commit by commit.
+    ///
+    /// Returns how many commits were replayed. A conflict aborts the pick and
+    /// is an error: PB §11 says "A conflict refuses and writes nothing", and a
+    /// half-applied range would be a changeset nobody authored.
+    pub fn cherry_pick_range(&self, range: &str) -> Result<usize> {
+        let listed = run(&self.root, &["rev-list", "--reverse", range])?;
+        let commits: Vec<&str> = listed.lines().filter(|l| !l.trim().is_empty()).collect();
+        if commits.is_empty() {
+            return Ok(0);
+        }
+        let mut args = vec!["cherry-pick"];
+        args.extend(commits.iter().copied());
+        match run(&self.root, &args) {
+            Ok(_) => Ok(commits.len()),
+            Err(e) => {
+                // Leave no half-applied sequence behind.
+                let _ = run(&self.root, &["cherry-pick", "--abort"]);
+                Err(e)
+            }
+        }
+    }
+
     /// `git checkout <commit> -- <path>` — PB §6.7's own verb for a rollback's
     /// restore. It restores the mode along with the bytes, which is why the
     /// restore does not write the file itself.

@@ -89,3 +89,38 @@ Four earlier decisions of PB v0.19 stand unchanged: **a repository may run sever
 - ~~**Three stale five-token claims survive outside the swept specs.**~~ **Closed on both limbs.** `envelope-vectors.md` §4.4 and `templates.md` §16 both now say **four** — `pytest`, `vitest`, `dart-test`, `swift-test` — with `gradle` reserved and emitted by nothing, matching `import-resolver.md` §11.1. Neither document carries `Template: v2` or `template=v2` in a signed line or a vector any more; the only surviving occurrences are historical (`gate-report.md` §8.2.1's arithmetic, `intent-doc.md` §3.2's compatibility targets, `templates.md` §11's parse table), where the old spelling is the subject rather than a live value.
 - **Two normative amendments came from the implementation, not from a review** (`result-file.md` §13 R36, 2026-08-27). They are the third and fourth instances of one shape the corpus had already caught twice — a probe whose subject is the **host** rather than the artifact, which reading cannot settle and only running can. The first two (P2's identity source, P3's overlay) were caught while specifying; these two were not, and they were terminal in the same way: `profile=container` unwritable, so every landing everywhere records `profile=none`, fails auto-merge precondition 1 and raises `G11`. **The lesson for the remaining specs is narrow and worth stating: every claim of the form "the kernel/runtime gives us X" is unverified until something runs it**, and this corpus contains more of them — `ci.md` §5.3's `ci.sh` was executed against a scratch repo and is the model.
 - **`params.ci` monotonicity is filed three times and decided nowhere** — `ci.md` OPEN-3, `result-file.md` OPEN-7, `manifest.md` OPEN-1. It is one owner question and `manifest.md`, which owns G16's check list, is where the fix would land.
+
+---
+
+## Owner rulings, 2026-08-28 — nine questions the build raised
+
+Every one was found by **running** the design rather than reading it, and each
+is now settled in the document that owns it. Recorded here because the corpus
+was written before any of it ran, and because two of the nine move bytes.
+
+| # | Question | Ruling | Where |
+|---|---|---|---|
+| 1 | Does the Dart declarative subset admit YAML's own quote escapes? | **Admit `''` and `\"`.** One apostrophe in a `description:` made every Dart file in the repository contribute no edges, permanently. | `import-resolver.md` §6.3 step 2 |
+| 2 | §4.1's Python anchor cannot reach `try: import oracle`, which §3.7 names by name | **Widen the anchor.** It gains "the first token after a `:` that opens a compound statement's suite on the same logical line". **Moves `closure_digest`.** | `import-resolver.md` §4.1 |
+| 3 | §8.3 step 2's `tool=` recipe repeats a stored `sha256:` prefix | **The prefix is written once**, and the recipe says so. §10's vector was already right. | `result-file.md` §8.3 |
+| 4 | Does the `G7` hard-lease counter count a landing with two leases? | **Yes.** "no **other** entry" becomes "no entry whose `gate` is not `G7`". One intent leasing two paths is the phenomenon the counter exists for. **Changes a `spine stats` number.** | `gate-report.md` §6.1 |
+| 5 | How does `spine new --from` get the quick branch's work onto the intent branch? | **Cherry-pick `merge-base..<branch>`.** `M(L)` is ledger content, and a squash makes `spine stats`' promotion count unanswerable. | `PLAYBOOK.md` §11 |
+| 6 | §7.1 contradicts itself on P4(a)'s source | **Netlink.** The parenthetical admitting a `sysfs` mounted inside the namespace is struck; the normative paragraph stands. | `result-file.md` §7.1 |
+| 7 | §11.6's items are numbered 1,2,3,4,5,4,5,6 | **Renumbered** to 1–8. Every reference by number was ambiguous. | `import-resolver.md` §11.6 |
+| 8 | §11.6 claims every adapter names its terminal session-end event and names two of four | **`pytest`'s is `pytest_sessionfinish`**, chosen by measurement against pytest 9.1.1: it runs after the last item and not when the process group is killed. **`vitest`'s is still owed** and no `vitest` adapter is conformant until §11.3 names one. | `import-resolver.md` §11.6 |
+| 9 | How does the collector, holding no keyring, find a reseal's `base=`? | **The syntactic reading** — the newest first-parent commit below `O` carrying a `Spine-Seal` trailer — and a disagreement with G9 surfaces as the retryable `base-moved`. | `result-file.md` §4.2 |
+
+**One residual is accepted rather than closed.** On (6), the P4 table row fixes
+netlink specifically while the normative paragraph also admits per-namespace
+`procfs`, so two conforming implementations could still read different files.
+Both are per-namespace and neither is the inherited `sysfs` the trap is about,
+so the disagreement cannot produce a wrong P4(a); it is recorded rather than
+legislated.
+
+**Two of the nine were found by running a runner, not by reading a spec.**
+(8) came from executing the pytest transport against pytest 9.1.1, which also
+showed that `@pytest.mark.skip` produces no `call` phase at all — a mapping read
+off `call` answered `unknown` for every skipped test in every repository. That
+is the same lesson `result-file.md` §13 R36 records: a claim about what a
+runtime does is unverified until something runs it.
+

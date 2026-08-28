@@ -39,20 +39,7 @@ pub fn run(new: &New) -> ExitCode {
     }
 
     let owed = match new {
-        // PB §11 gives `--from <branch>` one clause — it "promotes an escalated
-        // quick-lane branch" — and PB §5.4 constrains the result: "`spine new`
-        // branches only from trunk — a stacked intent would misattribute
-        // members after the first lands." What it does **not** fix is how the
-        // quick branch's work reaches the new branch: cherry-picked, squashed,
-        // merged, or left in the worktree for the human to commit. Each shapes
-        // `M(L) = git rev-list B..L`, which is the changeset the graph derives,
-        // so guessing here would invent ledger content. Recorded in
-        // `.build-notes/OPEN-questions.md`.
-        New::Create { from: Some(_), .. } => "--from <quick-branch>",
-        New::Create {
-            variant,
-            from: None,
-        } => return create(*variant),
+        New::Create { variant, from } => return create(*variant, from.as_deref()),
         New::Sign { .. } => "--sign",
         New::Reopen { .. } => "--reopen",
         New::Withdraw { .. } => "--withdraw",
@@ -69,8 +56,16 @@ pub fn run(new: &New) -> ExitCode {
 /// produces the document's content, and what this writes is the scaffold it
 /// starts from — which is what "emits the filled template" names and what
 /// TM §6.1 renders.
-fn create(variant: Variant) -> ExitCode {
-    match create_inner(variant) {
+/// `--from <branch>` "promotes an escalated quick-lane branch" (PB §11). The
+/// owner ruled the mechanism on 2026-08-28 and PB §11 now carries it: the
+/// branch is created from **trunk** — never from the quick branch, since "a
+/// stacked intent would misattribute members after the first lands" (PB §5.4)
+/// — and the quick branch's commits are **cherry-picked** onto it. Not
+/// squashed: `M(L) = git rev-list B..L` is the changeset PB §6.2 derives and
+/// G10 reconstructs, so the shape is ledger content, and `spine stats` "counts
+/// promotions separately", which a squash makes unanswerable.
+fn create(variant: Variant, from: Option<&str>) -> ExitCode {
+    match create_inner(variant, from) {
         Ok(code) => ExitCode::from(code),
         Err(e) => {
             eprintln!("spine new: {e}");
@@ -79,7 +74,7 @@ fn create(variant: Variant) -> ExitCode {
     }
 }
 
-fn create_inner(variant: Variant) -> Result<u8, Box<dyn std::error::Error>> {
+fn create_inner(variant: Variant, from: Option<&str>) -> Result<u8, Box<dyn std::error::Error>> {
     let cwd = std::env::current_dir()?;
     let repo = Repo::discover(&cwd)?;
 
@@ -181,6 +176,25 @@ fn create_inner(variant: Variant) -> Result<u8, Box<dyn std::error::Error>> {
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(&full, body.as_bytes())?;
+
+    // The promotion, after the branch exists and before the scaffold is
+    // announced: a conflict refuses, so the operator is not told about a
+    // document sitting on a half-promoted branch.
+    if let Some(quick) = from {
+        let range = format!("{trunk_ref}..{quick}");
+        match repo.cherry_pick_range(&range) {
+            Ok(0) => eprintln!("spine new: {quick} has no commits above {trunk} to promote"),
+            Ok(n) => eprintln!("spine new: promoted {n} commit(s) from {quick}"),
+            Err(e) => {
+                eprintln!("spine new: promoting {quick} failed: {e}");
+                eprintln!(
+                    "spine new: the cherry-pick was aborted; {branch} carries the scaffold \
+                     and none of {quick}'s commits"
+                );
+                return Ok(exit::REFUSED);
+            }
+        }
+    }
 
     println!("{id}");
     eprintln!(
