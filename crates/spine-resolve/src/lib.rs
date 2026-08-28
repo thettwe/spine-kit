@@ -37,6 +37,7 @@
 //! `mixed-objc-target` (IR §7.3). The tokens `kotlin` and `gradle` stay
 //! reserved and are assigned to nothing.
 
+pub mod closure;
 pub mod dart;
 pub mod glob;
 pub mod ids;
