@@ -425,6 +425,66 @@ impl Repo {
         Ok(sha)
     }
 
+    /// A signed commit carrying the worktree's changes — PB §4.3's reopen,
+    /// "the commit that changes the intent blob".
+    ///
+    /// Everything tracked is staged: a reopen's edit is the point of the
+    /// commit, and leaving part of it behind would sign a `Spine-Reopen` over
+    /// a blob the operator did not mean.
+    pub fn commit_worktree(&self, message: &[u8]) -> Result<String> {
+        run(&self.root, &["add", "-A"])?;
+        let head = run(&self.root, &["rev-parse", "HEAD"])?
+            .trim_end()
+            .to_string();
+        let tree = run(&self.root, &["write-tree"])?.trim_end().to_string();
+        let file = self.root.join(".git/spine-commit-message");
+        std::fs::write(&file, message).map_err(|e| GitError::Unexpected(e.to_string()))?;
+        let sha = run(
+            &self.root,
+            &[
+                "commit-tree",
+                &tree,
+                "-p",
+                &head,
+                "-F",
+                file.to_str().unwrap_or_default(),
+            ],
+        )?
+        .trim_end()
+        .to_string();
+        let _ = std::fs::remove_file(&file);
+        run(&self.root, &["update-ref", "HEAD", &sha])?;
+        // The index and worktree already match the tree just committed; this
+        // makes git's own status agree.
+        let _ = run(&self.root, &["reset", "--quiet", "--mixed", &sha]);
+        Ok(sha)
+    }
+
+    /// The value of one field on the **newest** commit of this branch carrying
+    /// a given trailer, or `None` where there is none.
+    ///
+    /// Newest, because a reopen's `voids=` names "the binding approval's
+    /// freeze" (PB §11) and the binding one is the latest.
+    pub fn last_field_on_branch(&self, trailer: &str, field: &str) -> Result<Option<String>> {
+        let out = run(&self.root, &["log", "--format=%B%x00", "HEAD"])?;
+        let needle = format!("{trailer}: ");
+        let key = format!("{field}=");
+        for message in out.split('\0') {
+            for line in message.lines() {
+                if !line.starts_with(&needle) {
+                    continue;
+                }
+                if let Some(value) = line
+                    .split_whitespace()
+                    .find_map(|f| f.strip_prefix(key.as_str()))
+                {
+                    return Ok(Some(value.to_string()));
+                }
+            }
+        }
+        Ok(None)
+    }
+
     /// `git cherry-pick <range>` — PB §11's promotion, commit by commit.
     ///
     /// Returns how many commits were replayed. A conflict aborts the pick and

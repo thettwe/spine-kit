@@ -128,30 +128,200 @@ fn inner(id: &str, override_lease: Option<&str>) -> Result<u8, Box<dyn std::erro
     }
     payload.push_str(&format!(" signer={signer}"));
 
-    let line = spine_envelope::render_line(TrailerName::Signoff, payload.as_bytes());
-    let line = line.strip_suffix(b"\n").unwrap_or(&line).to_vec();
-
-    eprintln!("spine new --sign: signing under spine-signoff@v1 — your key may ask to confirm");
-    let signature = sign_line(
+    write_statement(
+        &repo,
         TrailerName::Signoff,
-        &line,
+        &payload,
         Namespace::Signoff,
-        &Key::File(&key),
+        &key,
+        Commit::Empty,
     )?;
 
-    // ---- The commit: signed, and empty. ----------------------------------
-    //
-    // Empty because the transition is the *statement*, not a change: the intent
-    // blob is already at HEAD and signing must not move it.
+    eprintln!(
+        "spine new --sign: {id} is signed — blob {}, reopens {reopens}",
+        &head_blob[..12.min(head_blob.len())]
+    );
+    Ok(exit::OK)
+}
+
+/// Whether the statement's commit carries a change.
+///
+/// A sign-off is empty: PB §3.4 makes the transition "a signed, **empty**
+/// commit", because the statement *is* the transition and the blob it names is
+/// already at HEAD. A reopen is not: PB §4.3 says "the commit that changes the
+/// intent blob carries a signed `Spine-Reopen` line", and "A reopen must change
+/// the blob — a no-op reopen is refused."
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Commit {
+    Empty,
+    /// The worktree's changes, staged and committed with the statement.
+    WithWorktree,
+}
+
+/// Render, sign and commit one statement. The one place a signed line reaches a
+/// commit, so every form gets the same bytes-to-signature relationship.
+pub fn write_statement(
+    repo: &Repo,
+    name: TrailerName,
+    payload: &str,
+    namespace: Namespace,
+    key: &Path,
+    commit: Commit,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let line = spine_envelope::render_line(name, payload.as_bytes());
+    let line = line.strip_suffix(b"\n").unwrap_or(&line).to_vec();
+
+    eprintln!(
+        "spine new: signing under {} — your key may ask to confirm",
+        namespace.as_str()
+    );
+    let signature = sign_line(name, &line, namespace, &Key::File(key))?;
+
     let mut message = line.clone();
     message.push(b'\n');
-    message.extend_from_slice(&sig_line(TrailerName::Signoff, &signature));
-    let sha = repo.commit_empty(&message)?;
+    message.extend_from_slice(&sig_line(name, &signature));
 
+    let sha = match commit {
+        Commit::Empty => repo.commit_empty(&message)?,
+        Commit::WithWorktree => repo.commit_worktree(&message)?,
+    };
     println!("{sha}");
+    Ok(sha)
+}
+
+/// `spine new --reopen <id> --reason "…"` — PB §4.3's transition.
+///
+/// > "**Reopen is a transition, not an edit.** If implementation reveals the
+/// > tests are wrong, that is an intent problem, and the only way to change a
+/// > frozen byte is `spine new --reopen INT-042 --reason \"…\"`: the commit
+/// > that changes the intent blob carries a signed `Spine-Reopen` line naming
+/// > the freeze digest it voids, and returns the intent to
+/// > `awaiting-sign-off`. **A reopen must change the blob — a no-op reopen is
+/// > refused.**"
+pub fn reopen(id: &str, reason: &str) -> ExitCode {
+    match reopen_inner(id, reason) {
+        Ok(code) => ExitCode::from(code),
+        Err(e) => {
+            eprintln!("spine new --reopen: {e}");
+            ExitCode::from(exit::ERROR)
+        }
+    }
+}
+
+fn reopen_inner(id: &str, reason: &str) -> Result<u8, Box<dyn std::error::Error>> {
+    let cwd = std::env::current_dir()?;
+    let repo = Repo::discover(&cwd)?;
+    let doc = intent_path(id);
+
+    // "A reopen must change the blob — a no-op reopen is refused." Checked
+    // against HEAD's blob, which is what the previous sign-off named.
+    let head_blob = repo.blob_id_at_head(&doc);
+    let on_disk = std::fs::read(repo.root().join(&doc)).map_err(|_| {
+        format!("{doc} is not in the worktree; a reopen is the edit that changes it")
+    })?;
+    let edited = repo.hash_object_filtered(&doc, &on_disk)?;
+    if head_blob.as_deref() == Some(edited.as_str()) {
+        eprintln!(
+            "spine new --reopen: {doc} is unchanged — a reopen is the commit that changes the \
+             intent blob, and a no-op reopen is refused (PB §4.3)"
+        );
+        return Ok(exit::REFUSED);
+    }
+
+    // `voids=` names the binding approval's freeze, "`none` only when no
+    // approval exists; G13 refuses otherwise".
+    let voids = repo
+        .last_field_on_branch("Spine-Approve", "freeze")?
+        .unwrap_or_else(|| "none".to_string());
+    let reopens = repo.count_trailer_on_branch("Spine-Reopen")? + 1;
+    let signer = repo.config("user.email").ok_or("git has no `user.email`")?;
+    let key = signing_key(&repo)?;
+
+    let payload = format!(
+        "{id} voids={voids} reopens={reopens} reason={} signer={signer}",
+        json_string(reason)
+    );
+    write_statement(
+        &repo,
+        TrailerName::Reopen,
+        &payload,
+        Namespace::Signoff,
+        &key,
+        Commit::WithWorktree,
+    )?;
     eprintln!(
-        "spine new --sign: {id} is signed — blob {} , reopens {reopens}",
-        &head_blob[..12.min(head_blob.len())]
+        "spine new --reopen: {id} is back to awaiting-sign-off — voids {voids}, reopens {reopens}"
+    );
+    Ok(exit::OK)
+}
+
+/// `spine new --withdraw <id> --reason "…" [--protected]` — the exit that lands
+/// a tombstone.
+pub fn withdraw(id: &str, reason: &str, protected: bool) -> ExitCode {
+    match withdraw_inner(id, reason, protected) {
+        Ok(code) => ExitCode::from(code),
+        Err(e) => {
+            eprintln!("spine new --withdraw: {e}");
+            ExitCode::from(exit::ERROR)
+        }
+    }
+}
+
+fn withdraw_inner(
+    id: &str,
+    reason: &str,
+    protected: bool,
+) -> Result<u8, Box<dyn std::error::Error>> {
+    let cwd = std::env::current_dir()?;
+    let repo = Repo::discover(&cwd)?;
+    let doc = intent_path(id);
+
+    let Some(head_blob) = repo.blob_id_at_head(&doc) else {
+        eprintln!("spine new --withdraw: HEAD has no {doc}; there is no intent to withdraw");
+        return Ok(exit::REFUSED);
+    };
+    let signer = repo.config("user.email").ok_or("git has no `user.email`")?;
+    let key = signing_key(&repo)?;
+
+    // MF §4.8.3: `Spine-Withdraw` verifies under "`spine-signoff@v1` **or**
+    // `spine-review@v1` — check 8 decides which, by key". PB §11 gives
+    // `--protected` the second: "signed under `spine-review@v1` by a reviewer ≠
+    // the original signer, for an orphaned branch".
+    let namespace = if protected {
+        Namespace::Review
+    } else {
+        Namespace::Signoff
+    };
+
+    // `orphaned=<principal>` is GR §5.5's "orphaned tombstone": the sign-off's
+    // key has left `K`, so the sign-off is omitted from `A` and the withdraw
+    // line names the principal there is no fingerprint for.
+    let orphaned = protected
+        .then(|| {
+            repo.last_field_on_branch("Spine-Signoff", "signer")
+                .ok()
+                .flatten()
+        })
+        .flatten();
+
+    let mut payload = format!("{id} blob={head_blob}");
+    if let Some(principal) = &orphaned {
+        payload.push_str(&format!(" orphaned={principal}"));
+    }
+    payload.push_str(&format!(" reason={} signer={signer}", json_string(reason)));
+
+    write_statement(
+        &repo,
+        TrailerName::Withdraw,
+        &payload,
+        namespace,
+        &key,
+        Commit::Empty,
+    )?;
+    eprintln!(
+        "spine new --withdraw: {id} is withdrawn under {} — land it with `spine check --land {id}` \
+         to seal the tombstone",
+        namespace.as_str()
     );
     Ok(exit::OK)
 }

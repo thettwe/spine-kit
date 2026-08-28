@@ -41,16 +41,18 @@ pub fn run(new: &New) -> ExitCode {
         return ExitCode::from(exit::REFUSED);
     }
 
-    let owed = match new {
-        New::Create { variant, from } => return create(*variant, from.as_deref()),
-        New::Sign { id, override_lease } => {
-            return crate::sign::run(id, override_lease.as_deref());
-        }
-        New::Reopen { .. } => "--reopen",
-        New::Withdraw { .. } => "--withdraw",
-    };
-    eprintln!("spine new: {owed} is not yet implemented");
-    ExitCode::from(exit::ERROR)
+    // Every one of PB §11's four forms is implemented, so this dispatch
+    // returns from each arm and has no fallback left.
+    match new {
+        New::Create { variant, from } => create(*variant, from.as_deref()),
+        New::Sign { id, override_lease } => crate::sign::run(id, override_lease.as_deref()),
+        New::Reopen { id, reason } => crate::sign::reopen(id, reason),
+        New::Withdraw {
+            id,
+            reason,
+            protected,
+        } => crate::sign::withdraw(id, reason, *protected),
+    }
 }
 
 /// `spine new [--change|--bug]` — PB §11: "runs the interview (§3.4) on a fresh

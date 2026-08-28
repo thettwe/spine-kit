@@ -297,3 +297,145 @@ fn signing_without_a_terminal_refuses() {
     assert!(stderr.contains("TTY-only"), "{stderr}");
     assert!(!repo.message().contains("Spine-Signoff:"));
 }
+
+/// PB §4.3: "**A reopen must change the blob — a no-op reopen is refused.**"
+/// And it is the commit that carries the edit, not an empty one: "the commit
+/// that changes the intent blob carries a signed `Spine-Reopen` line".
+#[test]
+fn a_reopen_must_change_the_blob_and_carries_the_edit() {
+    let Some(repo) = Repo::new("reopen") else {
+        return;
+    };
+    assert_eq!(repo.sign(&["new", "--sign", "INT-001"]).0, 0);
+
+    // Nothing edited: refused, and nothing committed.
+    let head = git(&repo.0, &["rev-parse", "HEAD"]).unwrap();
+    let (code, out) = repo.sign(&["new", "--reopen", "INT-001", "--reason", "why"]);
+    assert_eq!(code, 2, "{out}");
+    assert!(out.contains("no-op reopen is refused"), "{out}");
+    assert_eq!(git(&repo.0, &["rev-parse", "HEAD"]).unwrap(), head);
+
+    // A real edit: the reopen commits it alongside the statement.
+    let path = repo.0.join("intents/INT-001.md");
+    let text = std::fs::read_to_string(&path)
+        .unwrap()
+        .replace("AC-2: A zero-rate", "AC-2: A zero rate");
+    std::fs::write(&path, text).unwrap();
+
+    let (code, out) = repo.sign(&[
+        "new",
+        "--reopen",
+        "INT-001",
+        "--reason",
+        "AC-2 was untestable",
+    ]);
+    assert_eq!(code, 0, "{out}");
+    let message = repo.message();
+    let line = message
+        .lines()
+        .find(|l| l.starts_with("Spine-Reopen: "))
+        .expect("a Spine-Reopen line");
+    // "`voids=` names the binding approval's freeze, `none` only when no
+    // approval exists" — and none does here.
+    assert!(line.contains("voids=none"), "{line}");
+    assert!(line.contains("reopens=1"), "{line}");
+    assert!(line.contains(r#"reason="AC-2 was untestable""#), "{line}");
+    assert_eq!(
+        git(&repo.0, &["diff", "--name-only", "HEAD~1", "HEAD"]).unwrap(),
+        "intents/INT-001.md",
+        "the reopen is the commit that changes the blob"
+    );
+}
+
+/// PB §7.2: "`reopens=` is the count of signed reopens on the branch at
+/// signing, **so a sign-off cannot be replayed after a reopen**."
+#[test]
+fn a_sign_off_after_a_reopen_carries_the_new_count() {
+    let Some(repo) = Repo::new("reopens-count") else {
+        return;
+    };
+    assert_eq!(repo.sign(&["new", "--sign", "INT-001"]).0, 0);
+    assert!(repo.message().contains("reopens=0"));
+
+    let path = repo.0.join("intents/INT-001.md");
+    for (n, from) in [(1, "AC-2: A zero-rate"), (2, "AC-1: A single-line")] {
+        let text = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace(from, &format!("{from} invoice"));
+        std::fs::write(&path, text).unwrap();
+        let (code, out) = repo.sign(&["new", "--reopen", "INT-001", "--reason", "narrowed"]);
+        assert_eq!(code, 0, "{out}");
+        assert!(
+            repo.message().contains(&format!("reopens={n}")),
+            "{}",
+            repo.message()
+        );
+    }
+
+    let (code, out) = repo.sign(&["new", "--sign", "INT-001"]);
+    assert_eq!(code, 0, "{out}");
+    let message = repo.message();
+    let line = message
+        .lines()
+        .find(|l| l.starts_with("Spine-Signoff: "))
+        .unwrap();
+    assert!(line.contains("reopens=2"), "{line}");
+}
+
+/// PB §11's `Spine-Withdraw` payload: `INT-042 blob=<oid> reason="…"
+/// signer=<p>`, on a commit that changes nothing — the tombstone it lands has
+/// "tree identical to `B`'s".
+#[test]
+fn a_withdrawal_names_the_blob_and_changes_nothing() {
+    let Some(repo) = Repo::new("withdraw") else {
+        return;
+    };
+    assert_eq!(repo.sign(&["new", "--sign", "INT-001"]).0, 0);
+    let blob = git(&repo.0, &["rev-parse", "HEAD:intents/INT-001.md"]).unwrap();
+
+    let (code, out) = repo.sign(&["new", "--withdraw", "INT-001", "--reason", "superseded"]);
+    assert_eq!(code, 0, "{out}");
+    let message = repo.message();
+    let line = message
+        .lines()
+        .find(|l| l.starts_with("Spine-Withdraw: "))
+        .expect("a Spine-Withdraw line");
+    assert!(line.contains(&format!("blob={blob}")), "{line}");
+    assert!(line.contains(r#"reason="superseded""#), "{line}");
+    assert!(
+        git(&repo.0, &["diff", "--name-only", "HEAD~1", "HEAD"])
+            .unwrap()
+            .is_empty()
+    );
+}
+
+/// PB §7.2: "`reason=` values are JSON string literals." A quote or a
+/// backslash in the reason must not end the field or the line.
+#[test]
+fn a_reason_is_a_json_string_literal() {
+    let Some(repo) = Repo::new("reason-json") else {
+        return;
+    };
+    assert_eq!(repo.sign(&["new", "--sign", "INT-001"]).0, 0);
+
+    let awkward = r#"it said "no" \ and stopped"#;
+    let (code, out) = repo.sign(&["new", "--withdraw", "INT-001", "--reason", awkward]);
+    assert_eq!(code, 0, "{out}");
+    let message = repo.message();
+    let line = message
+        .lines()
+        .find(|l| l.starts_with("Spine-Withdraw: "))
+        .unwrap();
+    assert!(
+        line.contains(r#"reason="it said \"no\" \\ and stopped""#),
+        "{line}"
+    );
+    // And the statement is still one line, which is what PB §7.2's shape needs.
+    assert_eq!(
+        message
+            .lines()
+            .filter(|l| l.starts_with("Spine-Withdraw: "))
+            .count(),
+        1
+    );
+}
