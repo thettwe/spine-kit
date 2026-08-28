@@ -381,3 +381,73 @@ Only the *absent* case was disclosed as DERIVED. The other three under-report th
 `derive.rs` is where it breaks. Two of its computed attrs are structurally dead (`late_reopen_count`, `voided_by`), one is fail-open on the security question it exists to answer (`seal_verified`), one silently reports a retired key as live (`signer.fingerprint`/`valid_to`), one under-reports the protected floor four different ways (`effective_c_a2`), and the value-domain checks that guard the artifact stop at node attrs — the edge side is guarded by a constant naming an attr that does not exist. Findings 1, 3, 4 and 5 are all in the same direction: a guarantee that fails silently rather than loudly. And the crate ships `DUMP_VERSION = 1` over a projection it knows is not DM §12.2's, which DM §3.4 makes a version bump, not a TODO.
 
 I would not land this as conforming to `dump_version: 1`.
+---
+
+# RESOLUTION — 2026-08-28
+
+Every finding above was worked. What changed, by number.
+
+## Every-landing and serious
+
+1. **G15 never consults the running binary.** Fixed: the gate takes the running
+   version and dist hash as input and compares them.
+2. **`G2=override` unreachable.** Fixed in `decide`: a tripwire wire is
+   discharged by a protected review as well as a tripwire one
+   (`Review::admits`), which is what makes GR §8.2's own report reproduce.
+3. **G8 clause 2's wire.** Fixed: `G8:<b.path>`, the base record's path.
+4. **G16 wires.** Fixed: all twenty outright findings carry a wire — ten
+   path-bearing (constitution, keyring, manifest), the rest bare. Guarded by
+   `no_g16_finding_is_raised_without_a_wire`, a source scan, because live
+   evaluation cannot reach all twenty statuses at once.
+5. **Path-encoding boundary.** Fixed in three places and made hard to
+   re-introduce:
+   - `Manifest::floor_entries_raw()` and `FileRecord::path_raw()` /
+     `file_path_raw()` return decoded bytes; `floor_entries()`'s doc now says
+     what it is. `G14Input.e_m_b`'s type already wanted `Vec<Vec<u8>>`, so the
+     correct accessor now typechecks and the encoded one does not.
+   - `ScaffoldObservation.path`, `Rollback.paths_not_restored` /
+     `paths_not_deleted` and `staging_residue` are raw bytes, which also makes
+     a non-UTF-8 path representable.
+   - `a_floor_entry_is_matched_by_its_bytes_and_not_by_its_esc_spelling` pins
+     both directions of the trap.
+6. **`Review` could not express the binding.** Fixed: `Binding` is a required
+   argument of `Review::new`, `names()` requires `Binding::Current`, and an
+   unbound review discharges nothing.
+7. **G13 check 2's spurious wire.** Fixed: a verifying unknown trailer raises
+   nothing.
+8. **G13 check 11.** Fixed: sums only *earlier verifying* approvals whose
+   principal is in the keyring — the key-rotation brick MF §4.8.2's voiding
+   exists to prevent.
+
+## Minor
+
+9. **Dialect-refused `C-A2` pattern.** Fixed, and the direction inverted: CN
+   §7.2 makes a malformed member make the *whole list* malformed, so the list
+   takes its default `["**"]` and everything is floor. Dropping the one pattern
+   shrank the floor by exactly the entry nobody could parse.
+10. **`diff_size_fires(_, None)`.** Fixed by typing it: `DiffSizeBound::Quick(n)`
+    or `GatedUnbounded`. The corpus still fixes no gated-lane bound (C6), but a
+    quick-lane caller can no longer omit one by accident.
+11. **`has_uppercase_in_bracket` on an unterminated `[`.** Fixed: an
+    unterminated bracket is ID §6.2's `bad-bracket`, left to the dialect.
+12. **G13 check 5 after two reopens.** Kept, now declared and tested: the
+    "binding" clause governs and the second reopen names nothing.
+13. **Approvals identified by `freeze=`.** Fixed: `Statement` gained `line` —
+    GR §5.5's third member, which was missing — and both `is_binding` and check
+    11 resolve by position in `E`. Check 3 refuses byte-identical lines, which
+    is what makes the line a key.
+14. **`monotone_union` dead.** Fixed by making step 4 decide rather than
+    assert: `Rollback.ancestor` carries `A` and
+    `paths_are_the_monotone_union(M_T, A, M_B)` computes the key union and the
+    per-key value union. The canonical shape needs no check — `Manifest::parse`
+    already refuses a one-element array, an unsorted one and a duplicate.
+15. **`only_protected_is_a_g7_hard_lease`.** Changed to GR §6.1's literal
+    reading: exactly one protected entry, and it is a `G7`. Two G7 leases do
+    not hold it. Recorded in OPEN-questions — the counter arguably wants them.
+16. **`G8Status::class()`'s default.** Kept, now declared: `protected` is the
+    wider class, so an unnamed clause guessing it can only over-review.
+17. **`manifest_blob_in_t.unwrap_or_default()`.** Fixed: absent is a mismatch,
+    not a blank an empty `manifest=` can match.
+18. **`a + d` wrapping.** Fixed: saturating.
+
+Workspace: 1300 tests, 0 failures, clippy clean.

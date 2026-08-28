@@ -155,8 +155,7 @@ pub fn evaluate(input: &G15Input<'_>, reviews: &Reviews) -> Verdict<G15Status> {
                             if let Some(self_sha) = input.running_self_sha256
                                 && self_sha != entry.sha256
                             {
-                                findings
-                                    .push(Finding::outright(G15Status::SelfBytesMismatch));
+                                findings.push(Finding::outright(G15Status::SelfBytesMismatch));
                             }
                         }
                     }
@@ -196,7 +195,7 @@ pub fn is_bypassable() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::review::{Review, ReviewClass};
+    use crate::review::{Binding, Review, ReviewClass};
     use crate::verdict::GateStatus;
 
     /// CI §5.5's format: `sha256sum` byte format, "lines sorted ascending by
@@ -235,11 +234,7 @@ mod tests {
     fn a_listed_platform_artifact_passes_and_raises_no_wire() {
         let dist = ArtifactList::dist_hash(list_bytes());
         let verdict = evaluate(
-            &input(
-                Some(list_bytes()),
-                Some("aarch64-apple-darwin"),
-                &dist,
-            ),
+            &input(Some(list_bytes()), Some("aarch64-apple-darwin"), &dist),
             &Reviews::default(),
         );
         assert_eq!(verdict.status, GateStatus::Pass);
@@ -250,18 +245,11 @@ mod tests {
     fn an_unlisted_platform_artifact_fails() {
         let dist = ArtifactList::dist_hash(list_bytes());
         let verdict = evaluate(
-            &input(
-                Some(list_bytes()),
-                Some("x86_64-pc-windows-msvc"),
-                &dist,
-            ),
+            &input(Some(list_bytes()), Some("x86_64-pc-windows-msvc"), &dist),
             &Reviews::default(),
         );
         assert_eq!(verdict.status, GateStatus::Fail);
-        assert_eq!(
-            verdict.statuses(),
-            [&G15Status::ArtifactNotListed]
-        );
+        assert_eq!(verdict.statuses(), [&G15Status::ArtifactNotListed]);
     }
 
     /// PB §6.3: "**a membership test, never a comparison**, because no ordering
@@ -283,7 +271,12 @@ mod tests {
         let dist = ArtifactList::dist_hash(list_bytes());
         for version in ["1.5.0", "1.3.0", "1.4.0+local", "0.0.0-synthetic"] {
             let verdict = evaluate(
-                &running(version, Some(list_bytes()), Some("aarch64-apple-darwin"), &dist),
+                &running(
+                    version,
+                    Some(list_bytes()),
+                    Some("aarch64-apple-darwin"),
+                    &dist,
+                ),
                 &Reviews::default(),
             );
             assert_eq!(
@@ -297,7 +290,12 @@ mod tests {
         // And the pinned version still passes, so the test separates the two
         // rather than failing everything.
         let verdict = evaluate(
-            &running("1.4.0", Some(list_bytes()), Some("aarch64-apple-darwin"), &dist),
+            &running(
+                "1.4.0",
+                Some(list_bytes()),
+                Some("aarch64-apple-darwin"),
+                &dist,
+            ),
             &Reviews::default(),
         );
         assert_eq!(verdict.status, GateStatus::Pass);
@@ -310,20 +308,23 @@ mod tests {
     #[test]
     fn a_listed_name_whose_digest_is_not_our_bytes_fails() {
         let dist = ArtifactList::dist_hash(list_bytes());
-        let mut input = running("1.4.0", Some(list_bytes()), Some("aarch64-apple-darwin"), &dist);
+        let mut input = running(
+            "1.4.0",
+            Some(list_bytes()),
+            Some("aarch64-apple-darwin"),
+            &dist,
+        );
 
         // The list's entry for this artifact is all-ones.
-        input.running_self_sha256 = Some(
-            "1111111111111111111111111111111111111111111111111111111111111111",
-        );
+        input.running_self_sha256 =
+            Some("1111111111111111111111111111111111111111111111111111111111111111");
         assert_eq!(
             evaluate(&input, &Reviews::default()).status,
             GateStatus::Pass
         );
 
-        input.running_self_sha256 = Some(
-            "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
-        );
+        input.running_self_sha256 =
+            Some("dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd");
         let verdict = evaluate(&input, &Reviews::default());
         assert_eq!(verdict.status, GateStatus::Fail);
         assert_eq!(verdict.statuses(), [&G15Status::SelfBytesMismatch]);
@@ -383,15 +384,11 @@ mod tests {
     fn no_review_of_any_class_reaches_g15() {
         let dist = ArtifactList::dist_hash(list_bytes());
         let reviews = Reviews::new(vec![
-            Review::new(ReviewClass::BreakGlass, "SHA256:a").naming(vec!["G15"]),
-            Review::new(ReviewClass::Protected, "SHA256:b").naming(vec!["G15"]),
+            Review::new(ReviewClass::BreakGlass, "SHA256:a", Binding::Current).naming(vec!["G15"]),
+            Review::new(ReviewClass::Protected, "SHA256:b", Binding::Current).naming(vec!["G15"]),
         ]);
         let verdict = evaluate(
-            &input(
-                Some(list_bytes()),
-                Some("x86_64-pc-windows-msvc"),
-                &dist,
-            ),
+            &input(Some(list_bytes()), Some("x86_64-pc-windows-msvc"), &dist),
             &reviews,
         );
         assert_eq!(verdict.status, GateStatus::Fail);

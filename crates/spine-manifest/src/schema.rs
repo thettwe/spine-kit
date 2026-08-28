@@ -130,6 +130,25 @@ pub struct FileRecord {
     pub base: Option<String>,
 }
 
+impl FileRecord {
+    /// [`path`] decoded to raw bytes — including the `#<region key>` suffix,
+    /// which is why this is not a repository path and must not be handed to
+    /// anything that opens a file. It is the right value for a wire, whose
+    /// contract is raw bytes.
+    ///
+    /// [`path`]: FileRecord::path
+    pub fn path_raw(&self) -> Vec<u8> {
+        spine_canon::unesc(&self.path).expect("validated")
+    }
+
+    /// [`file_path`] decoded to raw bytes: the path on disk.
+    ///
+    /// [`file_path`]: FileRecord::file_path
+    pub fn file_path_raw(&self) -> Vec<u8> {
+        spine_canon::unesc(&self.file_path).expect("validated")
+    }
+}
+
 /// A parsed, validated `.spine/manifest.json`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Manifest {
@@ -230,7 +249,10 @@ impl Manifest {
     }
 
     pub fn repo(&self) -> &str {
-        self.value.get("repo").and_then(Value::as_str).expect("validated")
+        self.value
+            .get("repo")
+            .and_then(Value::as_str)
+            .expect("validated")
     }
 
     pub fn cli_version(&self) -> &str {
@@ -300,11 +322,21 @@ impl Manifest {
             .and_then(Value::as_str)
     }
 
-    /// MF §3.4's entry set `E(M)`: the **flattened value set**, deduplicated.
+    /// MF §3.4's entry set `E(M)`: the **flattened value set**, deduplicated,
+    /// in the `esc`-encoded spelling the manifest stores (MF §2.3).
     ///
     /// "An entry is a value, not a key and not a list." The key is not part of
     /// an entry's identity, so moving `AGENTS.md` between keys drops no entry
     /// and shrinks no floor.
+    ///
+    /// **These are not path bytes.** `caf\xc3\xa9/CONSTITUTION.md` comes back
+    /// as twenty-three ASCII characters, and comparing them against the raw
+    /// bytes of a diff — which is what G14's literal floor does — silently
+    /// matches nothing. Sort order is over the encoded bytes, which is what
+    /// GR §5.7 wants for `floor_hits`; use [`floor_entries_raw`] wherever the
+    /// entries meet path bytes.
+    ///
+    /// [`floor_entries_raw`]: Manifest::floor_entries_raw
     pub fn floor_entries(&self) -> Vec<&str> {
         let mut out: Vec<&str> = Vec::new();
         let Some(Value::Obj(members)) = self.value.get("paths") else {
@@ -322,6 +354,48 @@ impl Manifest {
         out
     }
 
+    /// `paths` as key → value set, in the key order the object stores (JCS
+    /// sorts them, so ascending by key). Each value is the `esc` spelling.
+    ///
+    /// The **shape** — a string for a singleton, a sorted duplicate-free array
+    /// of two or more (MF §3.4) — is settled at parse time, so a caller
+    /// reading this back never has to re-check it and a caller *building* a
+    /// `paths` object has to produce it.
+    pub fn paths_by_key(&self) -> Vec<(&str, Vec<&str>)> {
+        let Some(Value::Obj(members)) = self.value.get("paths") else {
+            return Vec::new();
+        };
+        members
+            .iter()
+            .map(|(key, value)| {
+                let values = match value {
+                    Value::Str(s) => vec![s.as_str()],
+                    Value::Arr(items) => items.iter().filter_map(Value::as_str).collect(),
+                    _ => Vec::new(),
+                };
+                (key.as_str(), values)
+            })
+            .collect()
+    }
+
+    /// [`floor_entries`] decoded: `E(M)` as **raw path bytes**, the form every
+    /// comparison against a tree or a diff needs.
+    ///
+    /// Order and deduplication are the encoded ones — `unesc` is injective, so
+    /// decoding cannot merge two entries, and G14 reads this as a set.
+    ///
+    /// Infallible on a parsed manifest: `check_repo_path` decodes every
+    /// `paths.*` value during validation, so a `Manifest` that exists at all
+    /// has entries that decode.
+    ///
+    /// [`floor_entries`]: Manifest::floor_entries
+    pub fn floor_entries_raw(&self) -> Vec<Vec<u8>> {
+        self.floor_entries()
+            .into_iter()
+            .map(|e| spine_canon::unesc(e).expect("validated"))
+            .collect()
+    }
+
     pub fn files(&self) -> Vec<FileRecord> {
         let Some(Value::Arr(items)) = self.value.get("files") else {
             return Vec::new();
@@ -329,7 +403,10 @@ impl Manifest {
         items
             .iter()
             .map(|record| {
-                let path = record.get("path").and_then(Value::as_str).expect("validated");
+                let path = record
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .expect("validated");
                 let (file_path, region) = grammar::split_region(path);
                 FileRecord {
                     path: path.to_string(),
@@ -345,13 +422,10 @@ impl Manifest {
                         .and_then(Value::as_str)
                         .expect("validated")
                         .to_string(),
-                    template: record
-                        .get("template")
-                        .and_then(Value::as_str)
-                        .map(|t| {
-                            let (name, v) = grammar::parse_template_ref(t).expect("validated");
-                            (name.to_string(), v)
-                        }),
+                    template: record.get("template").and_then(Value::as_str).map(|t| {
+                        let (name, v) = grammar::parse_template_ref(t).expect("validated");
+                        (name.to_string(), v)
+                    }),
                     base: record
                         .get("base")
                         .and_then(Value::as_str)
@@ -431,9 +505,8 @@ impl Manifest {
 
         // cli
         let cli = self.value.get("cli").expect("present");
-        typed(cli, "version", is_str).map_err(|_| {
-            Refusal::new(Status::CliVersionOutOfGrammar, "cli.version")
-        })?;
+        typed(cli, "version", is_str)
+            .map_err(|_| Refusal::new(Status::CliVersionOutOfGrammar, "cli.version"))?;
         typed(cli, "dist_hash", is_str)
             .map_err(|_| Refusal::new(Status::DistHashMalformed, "cli.dist_hash"))?;
         grammar::check_cli_version(self.cli_version())?;
@@ -635,15 +708,17 @@ impl Manifest {
                     Refusal::new(Status::OwnerUnknown, format!("files[].owner for {path:?}"))
                 })?;
 
-            let blob = record
-                .get("blob")
-                .and_then(Value::as_str)
-                .ok_or_else(|| Refusal::new(Status::BlobMalformed, format!("files[].blob for {path:?}")))?;
+            let blob = record.get("blob").and_then(Value::as_str).ok_or_else(|| {
+                Refusal::new(Status::BlobMalformed, format!("files[].blob for {path:?}"))
+            })?;
             grammar::check_blob(blob, format, &format!("files[].blob for {path:?}"))?;
 
             if let Some(template) = record.get("template") {
                 let s = template.as_str().ok_or_else(|| {
-                    Refusal::new(Status::TemplateMalformed, format!("files[].template for {path:?}"))
+                    Refusal::new(
+                        Status::TemplateMalformed,
+                        format!("files[].template for {path:?}"),
+                    )
                 })?;
                 let (name, version) = grammar::parse_template_ref(s)?;
                 // MF §3.6 / G16 check 7: the key must exist and its value must
@@ -812,9 +887,8 @@ fn check_member_name(name: &str) -> Result<()> {
     let ok = match bytes.next() {
         Some(first) if first.is_ascii_lowercase() => {
             name.len() <= 64
-                && bytes.all(|b| {
-                    b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-'
-                })
+                && bytes
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
         }
         _ => false,
     };

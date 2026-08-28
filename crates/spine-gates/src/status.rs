@@ -318,6 +318,22 @@ impl G8Status {
     /// GR §6.3's per-clause class column: "`tripwire` for the harness-moved
     /// clause; `protected` for the branch-edited-before-approval clause, the
     /// landed-id clause, and `C-T3`."
+    ///
+    /// DERIVED: GR §6.3 names four of the seven clauses. `differs-from-both`,
+    /// `intent-blob-differs` and `closure-not-contained` are unnamed, and they
+    /// take `protected`. Two reasons, both structural rather than a
+    /// preference: `tripwire` is the *narrower* class — PB §11 makes
+    /// `protected` dominate it, and a `tripwire` wire a `protected` review
+    /// also discharges (`Review::admits`) — so guessing `tripwire` for an
+    /// unnamed clause is the guess that can under-review a landing, while
+    /// guessing `protected` can only over-review one. And the three unnamed
+    /// clauses are the ones about the *intent's own identity* — a closure that
+    /// escaped the declared set, a blob that is not the signed one — which is
+    /// the company `branch-edited-before-approval` keeps, not `harness-moved`.
+    ///
+    /// The wildcard is deliberate for the same reason: a clause added later
+    /// and left out of GR §6.3 lands on `protected` rather than on whatever
+    /// the last arm happened to be.
     pub fn class(self) -> crate::wire::WireClass {
         match self {
             G8Status::HarnessMoved => crate::wire::WireClass::Tripwire,

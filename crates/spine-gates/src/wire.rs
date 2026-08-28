@@ -224,7 +224,10 @@ impl WireSet {
 
     /// Every wire this gate raised, in token order.
     pub fn of(&self, gate: Gate) -> Vec<Wire> {
-        self.ordered().into_iter().filter(|w| w.gate == gate).collect()
+        self.ordered()
+            .into_iter()
+            .filter(|w| w.gate == gate)
+            .collect()
     }
 
     /// PB §11's aggregation: "`protected` dominates `tripwire`, and a landing
@@ -238,19 +241,27 @@ impl WireSet {
     /// GR §6.1's counter predicate, "derived at read time and never stored":
     /// it "holds iff some entry has `gate == \"G7\"` and `class ==
     /// \"protected\"`, and no other entry has `class == \"protected\"`."
+    /// **Exactly one**, per the headline phrase it makes mechanical:
+    /// "landings whose only `class: \"protected\"` entry is a `G7` hard
+    /// lease". Two protected `G7` entries do not hold it, because the second
+    /// is an "other entry" with `class == \"protected\"` — the predicate is
+    /// literal, and the sentence it serves says *only entry*, singular.
+    ///
+    /// DERIVED: the counter exists so that "one intent quietly taxing every
+    /// other landing becomes visible", and one intent leasing two paths is
+    /// that same phenomenon — under this reading it counts as zero. The
+    /// counter is read-time, in no digest and read by no gate, so following
+    /// the literal text costs a stats number and nothing else. Recorded in
+    /// `.build-notes/OPEN-questions.md`.
     pub fn only_protected_is_a_g7_hard_lease(&self) -> bool {
-        let mut saw_g7 = false;
-        for wire in &self.entries {
-            if wire.class != WireClass::Protected {
-                continue;
-            }
-            if wire.gate == Gate::G7 {
-                saw_g7 = true;
-            } else {
-                return false;
-            }
-        }
-        saw_g7
+        let mut protected = self
+            .entries
+            .iter()
+            .filter(|w| w.class == WireClass::Protected);
+        let Some(first) = protected.next() else {
+            return false;
+        };
+        first.gate == Gate::G7 && protected.next().is_none()
     }
 }
 
@@ -356,7 +367,12 @@ mod tests {
         assert!(WireKind::Finding > WireKind::Advisory);
         assert!(WireKind::Advisory > WireKind::Warn);
         let mut set = WireSet::new();
-        set.insert(Wire::at(Gate::G2, "x.ts", WireClass::Tripwire, WireKind::Warn));
+        set.insert(Wire::at(
+            Gate::G2,
+            "x.ts",
+            WireClass::Tripwire,
+            WireKind::Warn,
+        ));
         set.insert(Wire::at(
             Gate::G2,
             "x.ts",
@@ -427,6 +443,40 @@ mod tests {
             "CODEOWNERS",
             WireClass::Protected,
             WireKind::Finding,
+        ));
+        assert!(!set.only_protected_is_a_g7_hard_lease());
+    }
+
+    /// GR §6.1's "**no other** entry has `class == \"protected\"`", taken at
+    /// its word: a second `G7` lease is an other entry.
+    #[test]
+    fn two_protected_g7_leases_are_not_the_counters_shape() {
+        let mut set = WireSet::new();
+        set.insert(Wire::at(
+            Gate::G7,
+            "src/a.ts",
+            WireClass::Protected,
+            WireKind::Finding,
+        ));
+        assert!(set.only_protected_is_a_g7_hard_lease());
+        set.insert(Wire::at(
+            Gate::G7,
+            "src/b.ts",
+            WireClass::Protected,
+            WireKind::Finding,
+        ));
+        assert!(!set.only_protected_is_a_g7_hard_lease());
+    }
+
+    /// A landing with no protected entry at all is not a G7 lease either —
+    /// the counter is over landings that *are* `protected-review`.
+    #[test]
+    fn a_landing_with_no_protected_entry_does_not_hold_the_counter() {
+        let mut set = WireSet::new();
+        set.insert(Wire::pathless(
+            Gate::G7,
+            WireClass::Tripwire,
+            WireKind::Warn,
         ));
         assert!(!set.only_protected_is_a_g7_hard_lease());
     }

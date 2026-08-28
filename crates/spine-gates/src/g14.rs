@@ -123,16 +123,28 @@ fn has_uppercase_in_bracket(bytes: &[u8]) -> bool {
         }
         // "A `]` immediately after `[` or `[!` is a literal member" (ID §6.2).
         let mut first = true;
+        let mut uppercase = false;
+        let mut closed = false;
         while i < bytes.len() {
             let b = bytes[i];
             if b == b']' && !first {
+                closed = true;
                 break;
             }
             first = false;
-            if b.is_ascii_uppercase() {
-                return true;
-            }
+            uppercase |= b.is_ascii_uppercase();
             i += 1;
+        }
+        // An **unterminated** `[` is ID §6.2's `bad-bracket`, CN's refusal to
+        // raise, and there is no bracket expression here for MF §5.6 to object
+        // to. Reporting `c-a2-bracket-case` for it would put a G14 status on a
+        // finding G14 does not own, and would do it in preference to the
+        // refusal that actually applies. Leave it to the dialect.
+        if !closed {
+            return false;
+        }
+        if uppercase {
+            return true;
         }
         i += 1;
     }
@@ -271,10 +283,21 @@ pub struct G14Input {
     /// The `C-A2` pattern set in `T`, for MF §5.9's outright 2. Compared **by
     /// bytes** (CN §6.5), so these are the sources and not the compiled forms.
     pub c_a2_at_t: Vec<String>,
-    /// `E(M_B)` — MF §3.4's flattened `paths.*` value set at `B`. `∅` when the
-    /// landing carries `Spine-Upgrade: from=none` (MF §5.4).
+    /// `E(M_B)` — MF §3.4's flattened `paths.*` value set at `B`, as **raw
+    /// path bytes**. `∅` when the landing carries `Spine-Upgrade: from=none`
+    /// (MF §5.4).
+    ///
+    /// **Not the manifest's spelling.** MF §2.3 stores every `paths.*` value
+    /// `esc`-encoded, and `lmatch` below compares these against the raw bytes
+    /// of `D` and of `paths(T)`. Fill this from
+    /// `Manifest::floor_entries_raw`, never from `floor_entries`: the encoded
+    /// form of `café/CONSTITUTION.md` is twenty-three characters that match
+    /// the eighteen real bytes nowhere, and the floor would miss the path
+    /// without saying so — the one direction a floor must never fail.
     pub e_m_b: Vec<Vec<u8>>,
-    /// `E(M_T)`, for outright 1.
+    /// `E(M_T)`, for outright 1. Raw bytes, on the same terms as `e_m_b` —
+    /// and outright 1 compares the two sets to each other, so a mismatch in
+    /// encoding between them would also read as a shrunk floor.
     pub e_m_t: Vec<Vec<u8>>,
     /// Whether the landing carries a verifying `Spine-Upgrade: to=none`. G14's
     /// one exception: "an uninstall removes the manifest, so every entry is
@@ -312,18 +335,36 @@ pub fn evaluate(input: &G14Input, reviews: &Reviews) -> G14Outcome {
     // checked over the C-A2 half only: `F0`'s is a release-build assertion,
     // discharged by `f0()`'s expect and by this module's own test.
     let mut patterns = f0();
+    let mut c_a2: Vec<FloorPattern> = Vec::new();
+    let mut list_is_malformed = false;
     for source in &input.c_a2_at_b {
         match FloorPattern::new(source) {
-            Ok(pattern) => patterns.push(pattern),
+            Ok(pattern) => c_a2.push(pattern),
             Err(FloorPatternError::BracketCase) => {
                 findings.push(Finding::outright(G14Status::CA2BracketCase));
             }
             // ID §6.1's refusals are CN's to raise, not G14's — a pattern the
-            // dialect rejects never became `effective(C-A2)` at all (CN §6.2).
-            // Fail closed: it matches nothing here, and the landing is refused
-            // by the gate that owns the parse.
-            Err(FloorPatternError::Dialect(_)) => {}
+            // dialect rejects never became `effective(C-A2)` at all (CN §6.2),
+            // so reaching here at all means the caller passed something other
+            // than `effective`.
+            Err(FloorPatternError::Dialect(_)) => list_is_malformed = true,
         }
+    }
+    if list_is_malformed {
+        // CN §7.2: "a malformed member pattern makes the **whole list**
+        // malformed rather than dropping the member, since a list that quietly
+        // loses an entry is the failure `C-A2`'s monotonicity exists to
+        // prevent" — and a malformed `C-A2` takes the default `["**"]`, under
+        // which every path is floor.
+        //
+        // Dropping the one pattern, which is what this did, is the opposite
+        // direction: it shrinks the floor by exactly the entry nobody could
+        // parse. Unreachable for conforming input either way; the difference
+        // is which way it fails when the input does not conform, and one of
+        // the two directions loses a floor entry silently.
+        patterns.push(FloorPattern::new("**").expect("the default is a release constant"));
+    } else {
+        patterns.extend(c_a2);
     }
 
     // The collision clause's index, built once over `paths(T)` rather than
@@ -361,7 +402,12 @@ pub fn evaluate(input: &G14Input, reviews: &Reviews) -> G14Outcome {
     for d in &hits {
         findings.push(Finding::coverable(
             G14Status::FloorHit,
-            Wire::at(Gate::G14, d.clone(), WireClass::Protected, WireKind::Finding),
+            Wire::at(
+                Gate::G14,
+                d.clone(),
+                WireClass::Protected,
+                WireKind::Finding,
+            ),
         ));
     }
 
@@ -374,11 +420,7 @@ pub fn evaluate(input: &G14Input, reviews: &Reviews) -> G14Outcome {
 
     // Outright 2 — "`C-A2` never shrinks … byte-identical pattern sets,
     // `P_B ⊆ P_T`" (MF §5.9, CN §6.5).
-    if !input
-        .c_a2_at_b
-        .iter()
-        .all(|p| input.c_a2_at_t.contains(p))
-    {
+    if !input.c_a2_at_b.iter().all(|p| input.c_a2_at_t.contains(p)) {
         findings.push(Finding::outright(G14Status::CA2Shrank));
     }
 
@@ -402,7 +444,7 @@ pub fn floor_hits_and_wires_agree(outcome: &G14Outcome) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::review::{Review, ReviewClass};
+    use crate::review::{Binding, Review, ReviewClass};
     use crate::verdict::GateStatus;
 
     /// MF §5.6: "For `F0` this is a release-build assertion (no entry has a
@@ -476,7 +518,10 @@ mod tests {
         assert!(!literal_match(b"docs", b"docsy/a.md"));
         // A real path containing a metacharacter protects itself, which is the
         // whole reason this is not `pmatch` (MF §5.6).
-        assert!(literal_match(b"docs/notes[draft].md", b"docs/notes[draft].md"));
+        assert!(literal_match(
+            b"docs/notes[draft].md",
+            b"docs/notes[draft].md"
+        ));
     }
 
     #[test]
@@ -571,7 +616,7 @@ mod tests {
             ]
         );
         let reviews = Reviews::new(vec![
-            Review::new(ReviewClass::Protected, "SHA256:bob").naming(tokens),
+            Review::new(ReviewClass::Protected, "SHA256:bob", Binding::Current).naming(tokens),
         ]);
         let covered = evaluate(&mf_8_4_input(), &reviews);
         assert_eq!(covered.verdict.status, GateStatus::Override);
@@ -583,7 +628,7 @@ mod tests {
         let mut tokens = outcome.verdict.wires.tokens();
         tokens.pop();
         let reviews = Reviews::new(vec![
-            Review::new(ReviewClass::Protected, "SHA256:bob").naming(tokens),
+            Review::new(ReviewClass::Protected, "SHA256:bob", Binding::Current).naming(tokens),
         ]);
         assert_eq!(
             evaluate(&mf_8_4_input(), &reviews).verdict.status,
@@ -649,11 +694,17 @@ mod tests {
             ..Default::default()
         };
         let reviews = Reviews::new(vec![
-            Review::new(ReviewClass::Protected, "SHA256:a").naming(vec!["G14", "G14:CLAUDE.md"]),
+            Review::new(ReviewClass::Protected, "SHA256:a", Binding::Current)
+                .naming(vec!["G14", "G14:CLAUDE.md"]),
         ]);
         let outcome = evaluate(&input, &reviews);
         assert_eq!(outcome.verdict.status, GateStatus::Fail);
-        assert!(outcome.verdict.statuses().contains(&&G14Status::PathsShrank));
+        assert!(
+            outcome
+                .verdict
+                .statuses()
+                .contains(&&G14Status::PathsShrank)
+        );
     }
 
     /// MF §5.9's one exception: "except a landing carrying `Spine-Upgrade:
@@ -732,7 +783,12 @@ mod tests {
         // takes a protected review from the shipped floor whatever the base
         // held" (MF §5.4).
         assert_eq!(outcome.floor_hits, [".spine/manifest.json"]);
-        assert!(!outcome.verdict.statuses().contains(&&G14Status::PathsShrank));
+        assert!(
+            !outcome
+                .verdict
+                .statuses()
+                .contains(&&G14Status::PathsShrank)
+        );
     }
 
     /// A path with a comma, a space and a quote: `floor_hits` carries `esc`,
@@ -764,6 +820,102 @@ mod tests {
         assert_eq!(
             evaluate(&input, &Reviews::default()).floor_hits,
             [".github/workflows/ci.yml"]
+        );
+    }
+
+    /// The encoding boundary, in the one direction where getting it wrong is
+    /// silent: `e_m_b` holds **raw** bytes, and a manifest holds the `esc`
+    /// spelling of the same value (MF §2.3).
+    ///
+    /// `café/CONSTITUTION.md` is eighteen bytes on disk and twenty-three
+    /// characters in the manifest. Feed `lmatch` the twenty-three and it
+    /// matches the diff nowhere: no hit, no wire, `G14=pass`, and a floor
+    /// entry that has quietly stopped being one. Feed it the eighteen and the
+    /// entry holds. Nothing raises an error in either case, which is why this
+    /// is a test and not a refusal.
+    #[test]
+    fn a_floor_entry_is_matched_by_its_bytes_and_not_by_its_esc_spelling() {
+        let raw = "café/CONSTITUTION.md".as_bytes().to_vec();
+        let esc = spine_canon::esc(&raw);
+        assert_eq!(esc, "caf\\xc3\\xa9/CONSTITUTION.md");
+        assert_ne!(esc.as_bytes(), &raw[..]);
+
+        let diff = vec![DiffEntry::new(100_644, 100_644, raw.clone())];
+
+        let held = G14Input {
+            diff: diff.clone(),
+            e_m_b: vec![raw.clone()],
+            e_m_t: vec![raw.clone()],
+            ..Default::default()
+        };
+        assert_eq!(evaluate(&held, &Reviews::default()).floor_hits.len(), 1);
+
+        // What the encoded spelling would have done, recorded so that a future
+        // producer wiring `floor_entries` in place of `floor_entries_raw`
+        // fails this test rather than shipping a floor with a hole in it.
+        let missed = G14Input {
+            diff,
+            e_m_b: vec![esc.clone().into_bytes()],
+            e_m_t: vec![esc.into_bytes()],
+            ..Default::default()
+        };
+        assert!(evaluate(&missed, &Reviews::default()).floor_hits.is_empty());
+    }
+
+    /// CN §7.2, applied to a caller that passed a pattern `effective` would
+    /// never have produced: the list is malformed as a whole, so `C-A2` is
+    /// `["**"]` and every path is floor. The old reading dropped the one
+    /// unparseable pattern and left the rest of the floor standing.
+    #[test]
+    fn a_dialect_refused_c_a2_pattern_makes_the_whole_list_the_default() {
+        let input = G14Input {
+            diff: vec![DiffEntry::new(100_644, 100_644, "src/unrelated.py")],
+            // `\\` is outside ID §6.1's pattern alphabet.
+            c_a2_at_b: vec!["infra/".into(), "docs/a\\b".into()],
+            c_a2_at_t: vec!["infra/".into(), "docs/a\\b".into()],
+            ..Default::default()
+        };
+        let outcome = evaluate(&input, &Reviews::default());
+        assert_eq!(outcome.floor_hits, ["src/unrelated.py"]);
+    }
+
+    /// ID §6.2 owns the unterminated bracket, and its refusal is `bad-bracket`.
+    /// MF §5.6's `c-a2-bracket-case` is about a *bracket expression* whose
+    /// members casefold to a different set, and an unterminated `[` is not one.
+    #[test]
+    fn an_unterminated_bracket_is_the_dialects_refusal_not_g14s() {
+        assert!(matches!(
+            FloorPattern::new("docs/[Ab"),
+            Err(FloorPatternError::Dialect(_))
+        ));
+        assert!(matches!(
+            FloorPattern::new("docs/[Ab]"),
+            Err(FloorPatternError::BracketCase)
+        ));
+    }
+
+    /// The producer side of the same boundary: the accessor that returns the
+    /// value `e_m_b` wants returns it decoded, and its sibling does not.
+    #[test]
+    fn floor_entries_raw_is_the_accessor_that_feeds_the_floor() {
+        // Only `paths` matters here; the rest is the minimum MF §3 accepts.
+        let json = concat!(
+            r#"{"cli":{"dist_hash":"sha256:"#,
+            "980d4cb66bc03353cdb93d9149ead2ec7aae73c8e1ab6ade536eb8628acd0753",
+            r#"","version":"1.4.0"},"envelope":1,"files":[],"manifest_version":1,"#,
+            r#""object_format":"sha1","params":{"ci":"github","isolation":"container",""#,
+            r#"langs":["python"],"timeout":1800,"trunk":"main"},"#,
+            r#""paths":{"constitution":"caf\\xc3\\xa9/CONSTITUTION.md"},"repo":"myrepo","#,
+            r#""resign":{"intent":2,"intent-bug":2,"intent-change":2},"schema":7,"#,
+            r#""templates":{"intent":2,"intent-bug":2,"intent-change":2}}"#,
+            "\n"
+        );
+        let m =
+            spine_manifest::Manifest::parse(json.as_bytes(), None).expect("a conforming manifest");
+        assert_eq!(m.floor_entries(), ["caf\\xc3\\xa9/CONSTITUTION.md"]);
+        assert_eq!(
+            m.floor_entries_raw(),
+            [b"caf\xc3\xa9/CONSTITUTION.md".to_vec()]
         );
     }
 }

@@ -14,6 +14,8 @@
 //! stays append-only, and a bogus commit cannot brick it".
 
 use crate::gate::Gate;
+#[cfg(test)]
+use crate::review::Binding;
 use crate::review::{Mode, ReviewClass, Reviews, signerless_review_count_holds};
 use crate::status::G13Status;
 use crate::verdict::{Finding, Verdict, decide};
@@ -91,8 +93,17 @@ impl Trailer {
             Trailer::Review => &["spine-review@v1"],
             Trailer::Seal if recovery_seal => &["spine-review@v1"],
             Trailer::Seal => &["spine-seal@v1"],
-            // A line claiming no known role has no required namespace; check 2
-            // reaches it only through `Verification::SignatureFailed`.
+            // A line claiming no known role has no required namespace.
+            //
+            // The empty slice is the value, and it is NOT the whole rule:
+            // `[].contains(_)` is false for every namespace, so a hand-made
+            // `Spine-Foo` line whose signature **verifies** used to fall
+            // through to `statement-namespace` and raise a class=protected
+            // `G13:<oid>` wire — promoting the landing to protected-review on
+            // a trailer MF §4.8.3's table has no row for. §4.8.4 describes the
+            // coverable branch as being for a *failing* line, "noise a human
+            // may accept". Check 2 now skips an unknown trailer that verified,
+            // rather than relying on this slice to say so.
             Trailer::Other(_) => &[],
         }
     }
@@ -167,6 +178,22 @@ pub struct EventCommit {
 pub struct Statement {
     pub fingerprint: String,
     pub namespace: String,
+    /// "The trailer line exactly as it appears in the commit message,
+    /// excluding the line terminator" (GR §5.5), which is `authority`'s third
+    /// member and was missing here.
+    ///
+    /// It is also this statement's **identity in `E`**: check 3 refuses two
+    /// byte-identical signed lines, so a line resolves to at most one commit,
+    /// and resolving by `freeze=` — which two approvals may legitimately share
+    /// — mis-picks whichever came first.
+    pub line: String,
+}
+
+impl Statement {
+    /// The statement's position in `E`, by the line it is.
+    fn position_in(&self, events: &[EventCommit]) -> Option<usize> {
+        events.iter().position(|c| c.line == self.line)
+    }
 }
 
 /// GR §5.5's `authority` object — "the bound statements" (MF §4.8.2).
@@ -301,8 +328,13 @@ pub fn evaluate(input: &G13Input<'_>, reviews: &Reviews) -> Verdict<G13Status> {
         }
         let status = match &commit.verification {
             Verification::Ok { namespace, .. } => {
+                // An unknown trailer that VERIFIED is not this check's
+                // business. MF §4.8.3's table gives it no required namespace,
+                // and a gate cannot find a line off a table it is not on — so
+                // `admitted.is_empty()` means "no rule to break" and not
+                // "breaks every rule", which is what `[].contains(_)` said.
                 let admitted = commit.trailer.required_namespaces(input.recovery_seal);
-                if admitted.contains(&namespace.as_str()) {
+                if admitted.is_empty() || admitted.contains(&namespace.as_str()) {
                     continue;
                 }
                 G13Status::StatementNamespace
@@ -333,8 +365,8 @@ pub fn evaluate(input: &G13Input<'_>, reviews: &Reviews) -> Verdict<G13Status> {
     }
 
     // 4 — the binding approval (PB §4.3, MF §4.8.4).
-    if let Some((_, approve)) = &input.authority.approve
-        && !is_binding(approve, input.events, input.intent_blob)
+    if let Some((statement, approve)) = &input.authority.approve
+        && !is_binding(statement, approve, input.events, input.intent_blob)
     {
         findings.push(Finding::outright(G13Status::ApprovalVoided));
     }
@@ -352,6 +384,21 @@ pub fn evaluate(input: &G13Input<'_>, reviews: &Reviews) -> Verdict<G13Status> {
                 }
                 // A reopen voids the approval before it, so the next reopen
                 // with none of its own reads `voids=none`.
+                //
+                // DERIVED, and the two clauses of check 5 pull apart here.
+                // Two consecutive reopens with no approval between them: the
+                // first clause asks for "the `freeze=` of the approval
+                // **binding** immediately before it", and after the first
+                // reopen no approval is binding — so the second reopen names
+                // nothing, which is `voids=none`. The second clause reads
+                // "`voids=none` exactly when no approval preceded it", and one
+                // did precede it.
+                //
+                // The first clause governs, because the alternative is for the
+                // second reopen to name a `freeze=` the first already voided —
+                // a signed claim to void something already void, and no reading
+                // of "binding" makes that true. The second clause is the base
+                // case of the first, not an independent test.
                 freeze_before = None;
             }
             Payload::None => {}
@@ -370,8 +417,10 @@ pub fn evaluate(input: &G13Input<'_>, reviews: &Reviews) -> Verdict<G13Status> {
     // 7 — team mode, no self-approved protected or break-glass review.
     if input.mode == Mode::Team {
         for review in reviews.all() {
-            if matches!(review.class, ReviewClass::Protected | ReviewClass::BreakGlass)
-                && review.self_approved
+            if matches!(
+                review.class,
+                ReviewClass::Protected | ReviewClass::BreakGlass
+            ) && review.self_approved
             {
                 findings.push(Finding::outright(G13Status::SelfApprovedProtected));
             }
@@ -386,8 +435,7 @@ pub fn evaluate(input: &G13Input<'_>, reviews: &Reviews) -> Verdict<G13Status> {
     }
 
     // 9 — the signerless overlay.
-    if input.authority.signer_key().is_none()
-        && !signerless_review_count_holds(input.mode, reviews)
+    if input.authority.signer_key().is_none() && !signerless_review_count_holds(input.mode, reviews)
     {
         findings.push(Finding::outright(G13Status::SignerlessReviewCount));
     }
@@ -413,12 +461,36 @@ pub fn evaluate(input: &G13Input<'_>, reviews: &Reviews) -> Verdict<G13Status> {
     if input.situation == Situation::InFlight {
         // 11 — `total_rounds=` equals its own `rounds=` plus the `rounds=` of
         // every earlier verifying `Spine-Approve` in `E`.
-        if let Some((_, approve)) = &input.authority.approve {
+        if let Some((statement, approve)) = &input.authority.approve {
+            // "the `rounds=` of every **earlier verifying** `Spine-Approve`
+            // in `E`" (MF §4.8.4 check 11). Both adjectives are load-bearing
+            // and the `freeze != freeze` filter enforced neither.
+            //
+            // **Earlier**: `E` is ancestor-first (GR §5.5.1), so "earlier" is
+            // "before this one in `E`" — the old filter summed LATER approvals
+            // too.
+            //
+            // **Verifying**: a void approval is one check 2 correctly skipped,
+            // and counting its `rounds=` produced a spurious
+            // `total-rounds-mismatch`. That is precisely the brick MF §4.8.2
+            // says voiding exists to prevent: "rotating a signer's key
+            // mid-flight would turn an append-only branch's own sign-off into
+            // an outright refusal". A signer whose key rotated out of `K`
+            // leaves exactly such an approval behind.
+            //
+            // **This one**: by the statement's own line, not by its `freeze=`.
+            // Two approvals sharing a freeze are legitimate — re-approving an
+            // unchanged tree produces exactly that — and the freeze match took
+            // the first of them, summing the wrong prefix of `E`.
+            let this_one = statement.position_in(input.events);
             let earlier: u64 = input
                 .events
                 .iter()
+                .take(this_one.unwrap_or(input.events.len()))
+                .filter(|c| matches!(c.verification, Verification::Ok { .. }))
+                .filter(|c| principals.contains(c.principal.as_str()))
                 .filter_map(|c| match &c.payload {
-                    Payload::Approve(a) if a.freeze != approve.freeze => Some(a.rounds),
+                    Payload::Approve(a) => Some(a.rounds),
                     _ => None,
                 })
                 .sum();
@@ -453,14 +525,21 @@ pub fn evaluate(input: &G13Input<'_>, reviews: &Reviews) -> Verdict<G13Status> {
 /// MF §4.8.7's `binding`. PB §4.3: "the newest `Spine-Approve` on the branch
 /// whose `freeze=` no `Spine-Reopen` names and whose `intent=` equals the
 /// current signed blob."
-fn is_binding(approve: &ApprovePayload, events: &[EventCommit], intent_blob: &str) -> bool {
+fn is_binding(
+    statement: &Statement,
+    approve: &ApprovePayload,
+    events: &[EventCommit],
+    intent_blob: &str,
+) -> bool {
     let newest_approve = events.iter().rposition(|c| {
-        matches!(&c.payload, Payload::Approve(_)) && matches!(c.verification, Verification::Ok { .. })
+        matches!(&c.payload, Payload::Approve(_))
+            && matches!(c.verification, Verification::Ok { .. })
     });
-    let is_newest = newest_approve.is_some_and(|i| match &events[i].payload {
-        Payload::Approve(a) => a.freeze == approve.freeze,
-        _ => false,
-    });
+    // By position, not by `freeze=`: two approvals may carry the same freeze —
+    // a re-approval of an unchanged tree is the ordinary way — and matching on
+    // it made an older approval read as the newest one.
+    let is_newest =
+        statement.position_in(events).is_some() && statement.position_in(events) == newest_approve;
     let last_reopen = events
         .iter()
         .rposition(|c| matches!(c.payload, Payload::Reopen { .. }));
@@ -587,7 +666,11 @@ mod tests {
     #[test]
     fn a_keyring_that_does_not_lint_halts_before_any_signature_is_read() {
         let broken = Keyring::missing();
-        let events = [commit(Trailer::Signoff, "alice", Verification::SignatureFailed)];
+        let events = [commit(
+            Trailer::Signoff,
+            "alice",
+            Verification::SignatureFailed,
+        )];
         let authority = Authority::default();
         let verdict = evaluate(&input(&broken, &events, &authority), &Reviews::default());
         assert_eq!(verdict.status, GateStatus::Fail);
@@ -611,6 +694,7 @@ mod tests {
             signoff: Some(Statement {
                 fingerprint: "SHA256:alice".into(),
                 namespace: "spine-signoff@v1".into(),
+                line: "line-alice".into(),
             }),
             ..Default::default()
         };
@@ -621,10 +705,125 @@ mod tests {
         // PB §6.2: "a branch stays append-only, and a bogus commit cannot brick
         // it." A protected review naming the oid discharges it.
         let reviews = Reviews::new(vec![
-            Review::new(ReviewClass::Protected, "SHA256:bob").naming(vec![format!("G13:{OID}")]),
+            Review::new(ReviewClass::Protected, "SHA256:bob", Binding::Current)
+                .naming(vec![format!("G13:{OID}")]),
         ]);
         let covered = evaluate(&input(&k, &events, &authority), &reviews);
         assert_eq!(covered.status, GateStatus::Override);
+    }
+
+    /// Check 5's two clauses, where they pull apart: two consecutive reopens
+    /// with no approval between them. The second names nothing, because after
+    /// the first nothing is binding.
+    #[test]
+    fn a_second_consecutive_reopen_voids_none() {
+        let k = team_keyring();
+        let approve = ApprovePayload {
+            intent: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            freeze: "f1".into(),
+            red_k: 3,
+            held: true,
+            reason: None,
+            rounds: 1,
+            total_rounds: 1,
+        };
+        let mut a = commit(
+            Trailer::Approve { has_run: false },
+            "bob@example.com",
+            ok("spine-review@v1"),
+        );
+        a.payload = Payload::Approve(approve);
+        let reopen = |voids: Option<&str>| {
+            let mut c = commit(Trailer::Reopen, "alice@example.com", ok("spine-signoff@v1"));
+            c.payload = Payload::Reopen {
+                voids: voids.map(str::to_string),
+            };
+            c
+        };
+
+        let good = [a.clone(), reopen(Some("f1")), reopen(None)];
+        let authority = Authority::default();
+        assert!(
+            !evaluate(&input(&k, &good, &authority), &Reviews::default())
+                .statuses()
+                .contains(&&G13Status::ReopenVoidsMismatch)
+        );
+
+        // Naming the freeze the first reopen already voided is the reading
+        // this rejects.
+        let bad = [a, reopen(Some("f1")), reopen(Some("f1"))];
+        assert!(
+            evaluate(&input(&k, &bad, &authority), &Reviews::default())
+                .statuses()
+                .contains(&&G13Status::ReopenVoidsMismatch)
+        );
+    }
+
+    /// Two approvals may carry the same `freeze=` — re-approving an unchanged
+    /// tree is the ordinary way to produce one — and `freeze` equality then
+    /// resolves the binding approval to whichever came first. Check 11 summed
+    /// the wrong prefix of `E` for it, and check 4 called the older one the
+    /// newest.
+    #[test]
+    fn two_approvals_sharing_a_freeze_resolve_by_position_not_by_freeze() {
+        let k = team_keyring();
+        let shared = |rounds: u64, total: u64| ApprovePayload {
+            intent: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into(),
+            freeze: "f1".into(),
+            red_k: 3,
+            held: true,
+            reason: None,
+            rounds,
+            total_rounds: total,
+        };
+        let first = shared(2, 2);
+        let second = shared(3, 5);
+
+        let mut e1 = commit(
+            Trailer::Approve { has_run: false },
+            "bob@example.com",
+            ok("spine-review@v1"),
+        );
+        e1.line = "line-approve-1".into();
+        e1.payload = Payload::Approve(first);
+        let mut e2 = commit(
+            Trailer::Approve { has_run: false },
+            "bob@example.com",
+            ok("spine-review@v1"),
+        );
+        e2.line = "line-approve-2".into();
+        e2.payload = Payload::Approve(second.clone());
+        let events = [e1, e2];
+
+        let authority = Authority {
+            signoff: Some(Statement {
+                fingerprint: "SHA256:alice".into(),
+                namespace: "spine-signoff@v1".into(),
+                line: "line-alice@example.com".into(),
+            }),
+            approve: Some((
+                Statement {
+                    fingerprint: "SHA256:bob".into(),
+                    namespace: "spine-review@v1".into(),
+                    line: "line-approve-2".into(),
+                },
+                second,
+            )),
+            ..Default::default()
+        };
+        let verdict = evaluate(&input(&k, &events, &authority), &Reviews::default());
+        // `total_rounds=5` = its own 3 plus the earlier 2. Resolving by
+        // `freeze` picked the *first* approval as "this one", summed nothing
+        // before it, and raised `total-rounds-mismatch`.
+        assert!(
+            !verdict
+                .statuses()
+                .contains(&&G13Status::TotalRoundsMismatch),
+            "statuses: {:?}",
+            verdict.statuses()
+        );
+        // And the second is the binding one, so check 4 stays quiet.
+        assert!(!verdict.statuses().contains(&&G13Status::ApprovalVoided));
     }
 
     /// MF §4.8.4: "**The split is deliberately not over `A`.** … splitting over
@@ -640,8 +839,10 @@ mod tests {
         )];
         let authority = Authority::default();
         let reviews = Reviews::new(vec![
-            Review::new(ReviewClass::Protected, "SHA256:bob").naming(vec![format!("G13:{OID}")]),
-            Review::new(ReviewClass::Protected, "SHA256:c").naming(vec![format!("G13:{OID}")]),
+            Review::new(ReviewClass::Protected, "SHA256:bob", Binding::Current)
+                .naming(vec![format!("G13:{OID}")]),
+            Review::new(ReviewClass::Protected, "SHA256:c", Binding::Current)
+                .naming(vec![format!("G13:{OID}")]),
         ]);
         let verdict = evaluate(&input(&k, &events, &authority), &reviews);
         assert_eq!(verdict.status, GateStatus::Fail);
@@ -664,8 +865,8 @@ mod tests {
         // Signerless, and the overlay is check 9's, not check 2's — supply the
         // reviews it wants so this test isolates the void rule.
         let reviews = Reviews::new(vec![
-            Review::new(ReviewClass::Protected, "SHA256:a"),
-            Review::new(ReviewClass::Protected, "SHA256:b"),
+            Review::new(ReviewClass::Protected, "SHA256:a", Binding::Current),
+            Review::new(ReviewClass::Protected, "SHA256:b", Binding::Current),
         ]);
         i.mode = Mode::Team;
         assert_eq!(evaluate(&i, &reviews).status, GateStatus::Pass);
@@ -685,8 +886,8 @@ mod tests {
         )];
         let authority = Authority::default();
         let reviews = Reviews::new(vec![
-            Review::new(ReviewClass::Protected, "SHA256:a"),
-            Review::new(ReviewClass::Protected, "SHA256:b"),
+            Review::new(ReviewClass::Protected, "SHA256:a", Binding::Current),
+            Review::new(ReviewClass::Protected, "SHA256:b", Binding::Current),
         ]);
         let verdict = evaluate(&input(&k, &events, &authority), &reviews);
         assert_eq!(verdict.statuses(), [&G13Status::StatementNamespace]);
@@ -719,7 +920,10 @@ mod tests {
             Trailer::Approve { has_run: false }.required_namespaces(false),
             ["spine-review@v1"]
         );
-        assert_eq!(Trailer::Review.required_namespaces(false), ["spine-review@v1"]);
+        assert_eq!(
+            Trailer::Review.required_namespaces(false),
+            ["spine-review@v1"]
+        );
         assert_eq!(Trailer::Seal.required_namespaces(false), ["spine-seal@v1"]);
         // PB §7.5's recovery form.
         assert_eq!(Trailer::Seal.required_namespaces(true), ["spine-review@v1"]);
@@ -738,6 +942,7 @@ mod tests {
             signoff: Some(Statement {
                 fingerprint: "SHA256:alice".into(),
                 namespace: "spine-signoff@v1".into(),
+                line: "line-alice".into(),
             }),
             ..Default::default()
         };
@@ -770,11 +975,15 @@ mod tests {
             signoff: Some(Statement {
                 fingerprint: "SHA256:alice".into(),
                 namespace: "spine-signoff@v1".into(),
+                line: "line-alice".into(),
             }),
             approve: Some((
                 Statement {
                     fingerprint: "SHA256:bob".into(),
                     namespace: "spine-review@v1".into(),
+                    // `commit()` builds `line-<principal>`; the statement is
+                    // the same line, which is how it resolves in `E`.
+                    line: "line-bob@example.com".into(),
                 },
                 approve,
             )),
@@ -812,6 +1021,7 @@ mod tests {
             signoff: Some(Statement {
                 fingerprint: "SHA256:alice".into(),
                 namespace: "spine-signoff@v1".into(),
+                line: "line-alice".into(),
             }),
             ..Default::default()
         };
@@ -833,11 +1043,13 @@ mod tests {
             signoff: Some(Statement {
                 fingerprint: "SHA256:alice".into(),
                 namespace: "spine-signoff@v1".into(),
+                line: "line-alice".into(),
             }),
             ..Default::default()
         };
         let reviews = Reviews::new(vec![
-            Review::new(ReviewClass::Protected, "SHA256:alice").self_approved(true),
+            Review::new(ReviewClass::Protected, "SHA256:alice", Binding::Current)
+                .self_approved(true),
         ]);
         let verdict = evaluate(&input(&k, &events, &authority), &reviews);
         assert!(
@@ -854,25 +1066,30 @@ mod tests {
         let signoff = Statement {
             fingerprint: "SHA256:alice".into(),
             namespace: "spine-signoff@v1".into(),
+            line: "line-alice".into(),
         };
         let by_signoff = Statement {
             fingerprint: "SHA256:alice".into(),
             namespace: "spine-signoff@v1".into(),
+            line: "line-alice".into(),
         };
         assert!(withdraw_key_ok(&by_signoff, Some(&signoff)));
         let by_other_signoff = Statement {
             fingerprint: "SHA256:carol".into(),
             namespace: "spine-signoff@v1".into(),
+            line: "line-carol".into(),
         };
         assert!(!withdraw_key_ok(&by_other_signoff, Some(&signoff)));
         let by_reviewer = Statement {
             fingerprint: "SHA256:bob".into(),
             namespace: "spine-review@v1".into(),
+            line: "line-bob".into(),
         };
         assert!(withdraw_key_ok(&by_reviewer, Some(&signoff)));
         let self_review = Statement {
             fingerprint: "SHA256:alice".into(),
             namespace: "spine-review@v1".into(),
+            line: "line-alice".into(),
         };
         assert!(!withdraw_key_ok(&self_review, Some(&signoff)));
         // The orphaned tombstone: no sign-off to differ from.
@@ -887,7 +1104,11 @@ mod tests {
         let k = team_keyring();
         let events: [EventCommit; 0] = [];
         let authority = Authority::default();
-        let one = Reviews::new(vec![Review::new(ReviewClass::Protected, "SHA256:a")]);
+        let one = Reviews::new(vec![Review::new(
+            ReviewClass::Protected,
+            "SHA256:a",
+            Binding::Current,
+        )]);
         let verdict = evaluate(&input(&k, &events, &authority), &one);
         assert!(
             verdict
@@ -895,8 +1116,8 @@ mod tests {
                 .contains(&&G13Status::SignerlessReviewCount)
         );
         let two = Reviews::new(vec![
-            Review::new(ReviewClass::Protected, "SHA256:a"),
-            Review::new(ReviewClass::Protected, "SHA256:b"),
+            Review::new(ReviewClass::Protected, "SHA256:a", Binding::Current),
+            Review::new(ReviewClass::Protected, "SHA256:b", Binding::Current),
         ]);
         assert_eq!(
             evaluate(&input(&k, &events, &authority), &two).status,
@@ -913,6 +1134,7 @@ mod tests {
             signoff: Some(Statement {
                 fingerprint: "SHA256:alice".into(),
                 namespace: "spine-signoff@v1".into(),
+                line: "line-alice".into(),
             }),
             ..Default::default()
         };
@@ -944,6 +1166,7 @@ mod tests {
             signoff: Some(Statement {
                 fingerprint: "SHA256:alice".into(),
                 namespace: "spine-signoff@v1".into(),
+                line: "line-alice".into(),
             }),
             ..Default::default()
         };
@@ -988,11 +1211,15 @@ mod tests {
             signoff: Some(Statement {
                 fingerprint: "SHA256:alice".into(),
                 namespace: "spine-signoff@v1".into(),
+                line: "line-alice".into(),
             }),
             approve: Some((
                 Statement {
                     fingerprint: "SHA256:bob".into(),
                     namespace: "spine-review@v1".into(),
+                    // `commit()` builds `line-<principal>`; the statement is
+                    // the same line, which is how it resolves in `E`.
+                    line: "line-bob@example.com".into(),
                 },
                 approve,
             )),
@@ -1025,12 +1252,56 @@ mod tests {
         )];
         let authority = Authority::default();
         let reviews = Reviews::new(vec![
-            Review::new(ReviewClass::Protected, "SHA256:a").naming(vec![format!("G13:{OID}")]),
-            Review::new(ReviewClass::Protected, "SHA256:b").naming(vec![format!("G13:{OID}")]),
+            Review::new(ReviewClass::Protected, "SHA256:a", Binding::Current)
+                .naming(vec![format!("G13:{OID}")]),
+            Review::new(ReviewClass::Protected, "SHA256:b", Binding::Current)
+                .naming(vec![format!("G13:{OID}")]),
         ]);
         assert_eq!(
             evaluate(&input(&k, &events, &authority), &reviews).status,
             GateStatus::Fail
         );
+    }
+    /// An unknown trailer that **verified** is not check 2's business.
+    ///
+    /// `required_namespaces` returns an empty slice for `Trailer::Other`, and
+    /// `[].contains(_)` is false for every namespace — so a hand-made
+    /// `Spine-Foo` line whose signature verifies produced `statement-namespace`
+    /// and a `class=protected` `G13:<oid>` wire, promoting the landing to
+    /// protected-review over a trailer MF §4.8.3's table has no row for. §4.8.4
+    /// describes the coverable branch as being for a *failing* line, "noise a
+    /// human may accept".
+    ///
+    /// The sibling test above covers the failing line; the `Ok` path was
+    /// untested, which is how the empty slice came to mean "breaks every rule"
+    /// instead of "no rule to break".
+    #[test]
+    fn an_unknown_trailer_that_verifies_raises_nothing() {
+        let k = team_keyring();
+        let authority = Authority {
+            signoff: Some(Statement {
+                fingerprint: "SHA256:alice".into(),
+                namespace: "spine-signoff@v1".into(),
+                line: "line-alice".into(),
+            }),
+            ..Default::default()
+        };
+
+        let verifying = [commit(
+            Trailer::Other("Spine-Foo".into()),
+            "alice@example.com",
+            Verification::Ok {
+                namespace: "spine-review@v1".into(),
+                fingerprint: "SHA256:alice".into(),
+            },
+        )];
+        let verdict = evaluate(&input(&k, &verifying, &authority), &Reviews::default());
+        assert_eq!(
+            verdict.status,
+            GateStatus::Pass,
+            "an unknown trailer that verified is off the table, not against it: {:?}",
+            verdict.statuses()
+        );
+        assert!(verdict.wires.is_empty(), "and it promotes no landing");
     }
 }

@@ -83,3 +83,31 @@ separator, and pins RF §10's vector as the arbiter. Documented at
 
 **The fix is one word in §8.3 step 2** — either the recipe drops its literal
 `sha256:`, or it says the prefix is stripped from `cli.dist_hash` first.
+
+## 4 · `gate-report.md` §6.1's G7 hard-lease counter counts two leases as none
+
+**Where.** GR §6.1: the `spine stats` counter for *"landings whose only
+`class: "protected"` entry is a `G7` hard lease"*, made mechanical as *"it
+holds iff some entry has `gate == "G7"` and `class == "protected"`, and no
+other entry has `class == "protected"`."*
+
+**The ambiguity.** A landing with **two** protected `G7` entries — one intent
+leasing two paths. Read literally, the second entry is an "other entry" with
+`class == "protected"`, so the predicate is false and the landing counts as
+zero. Read against the sentence the predicate serves — *"what the counter buys
+is that one intent quietly taxing every other landing becomes visible"* — two
+leases from one intent are exactly the phenomenon, and the landing should
+count.
+
+**What the implementation does.** The literal reading: exactly one protected
+entry, and it is a `G7`. `crates/spine-gates/src/wire.rs`,
+`only_protected_is_a_g7_hard_lease`, with both cases tested.
+
+**Why it is safe to leave open.** The counter is derived at read time, is in no
+digest, is read by no gate, and `spine stats` reads the graph rather than
+reports. Getting it wrong costs a number in a report to a human, and changing
+it later changes no stored bytes.
+
+**The fix is one word** — *"and no other entry has `class == "protected"`"*
+becomes *"and no entry with `gate != "G7"` has `class == "protected"`"*, if the
+counter is meant to count the two-lease landing.

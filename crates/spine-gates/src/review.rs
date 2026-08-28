@@ -57,15 +57,54 @@ pub struct Review {
     pub self_approved: bool,
     /// The `wires=` value, split on `,`.
     pub wires: Vec<String>,
+    /// **What this review is bound to**, and whether it is still current.
+    ///
+    /// MF §5.10 and §4.8.6 both require each review to carry `head=Hc` and "a
+    /// `tree=` equal to the tree under evaluation", and PB §6 spends two rows
+    /// on what happens when it does not: "`H ≠ review.head`, or
+    /// `merge-tree(review.base, H) ≠ review.tree` — the branch changed → same
+    /// state, **review void**."
+    ///
+    /// Without it every `override` was granted by a review that might have been
+    /// signed against a different branch state — a stale review discharging a
+    /// current finding, which is the whole thing a binding exists to prevent.
+    ///
+    /// `None` is unreachable through [`Review::new`], which takes the binding
+    /// as an argument precisely so it cannot be forgotten; it remains
+    /// representable so that a caller constructing the struct literally still
+    /// fails closed rather than defaulting to current.
+    pub binding: Option<Binding>,
+}
+
+/// A review's binding to the branch state it was signed against (PB §6, MF
+/// §5.10).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Binding {
+    /// `H == review.head` and `merge-tree(review.base, H) == review.tree`.
+    Current,
+    /// PB §6: "the branch changed → same state, **review void**."
+    ///
+    /// Void, not absent: the review exists and is verified, and it discharges
+    /// nothing. PB §5.4's retention rules decide whether it is *kept* across a
+    /// base move; this says only that it does not cover today's findings.
+    Void,
 }
 
 impl Review {
-    pub fn new(class: ReviewClass, fingerprint: impl Into<String>) -> Self {
+    /// The binding is a **constructor argument and not a setter**.
+    ///
+    /// A builder method can be forgotten, and forgetting this one grants every
+    /// `override` to a review signed against a branch state that no longer
+    /// exists — PB §6's "the branch changed → same state, **review void**".
+    /// Fifty-three construction sites had to be visited to make this change,
+    /// and that is the point: each one now says which state it is asserting.
+    pub fn new(class: ReviewClass, fingerprint: impl Into<String>, binding: Binding) -> Self {
         Review {
             class,
             fingerprint: fingerprint.into(),
             self_approved: false,
             wires: Vec::new(),
+            binding: Some(binding),
         }
     }
 
@@ -79,7 +118,19 @@ impl Review {
         self
     }
 
+    /// Does this review name `token` **and** still bind?
+    ///
+    /// The two are one question, deliberately: a caller that could ask them
+    /// separately is a caller that can forget the second, and forgetting it
+    /// grants every override to a review signed against a branch state that no
+    /// longer exists.
     pub fn names(&self, token: &str) -> bool {
+        self.binding == Some(Binding::Current) && self.wires.iter().any(|w| w == token)
+    }
+
+    /// What the review names, ignoring the binding — for a caller reporting
+    /// what a *void* review said, which PB §5.4's retention rules need.
+    pub fn names_regardless_of_binding(&self, token: &str) -> bool {
         self.wires.iter().any(|w| w == token)
     }
 }
@@ -138,7 +189,8 @@ impl Reviews {
     /// This is the discharge for every coverable Authority finding (MF §4.8.6,
     /// §5.10, §6.10) and, on a reseal, for G1's and G8's (GR §5.6.1).
     pub fn protected_names(&self, token: &str) -> bool {
-        self.of_class(ReviewClass::Protected).any(|r| r.names(token))
+        self.of_class(ReviewClass::Protected)
+            .any(|r| r.names(token))
     }
 
     /// GR §5.6.1 limb (a): is this wire "covered by a signed review **whose
@@ -279,7 +331,7 @@ mod tests {
     use crate::wire::{Wire, WireClass, WireKind};
 
     fn protected(fp: &str, tokens: &[&str]) -> Review {
-        Review::new(ReviewClass::Protected, fp).naming(tokens.to_vec())
+        Review::new(ReviewClass::Protected, fp, Binding::Current).naming(tokens.to_vec())
     }
 
     #[test]
@@ -346,7 +398,7 @@ mod tests {
             WireKind::Finding,
         ));
         let reviews = Reviews::new(vec![
-            Review::new(ReviewClass::BreakGlass, "SHA256:a").naming(vec!["G1"]),
+            Review::new(ReviewClass::BreakGlass, "SHA256:a", Binding::Current).naming(vec!["G1"]),
         ]);
         assert!(!reviews.contain(&set));
         assert!(reviews.break_glass_bypasses(Gate::G1));
@@ -358,7 +410,8 @@ mod tests {
     #[test]
     fn break_glass_naming_an_authority_gate_bypasses_nothing() {
         let reviews = Reviews::new(vec![
-            Review::new(ReviewClass::BreakGlass, "SHA256:a").naming(vec!["G14", "G13", "G5", "G9"]),
+            Review::new(ReviewClass::BreakGlass, "SHA256:a", Binding::Current)
+                .naming(vec!["G14", "G13", "G5", "G9"]),
         ]);
         for gate in [Gate::G14, Gate::G13, Gate::G5, Gate::G9] {
             assert!(!reviews.break_glass_bypasses(gate), "{gate}");
@@ -386,5 +439,75 @@ mod tests {
     fn two_reviews_from_one_key_do_not_satisfy_the_signerless_overlay() {
         let same_key = Reviews::new(vec![protected("SHA256:a", &[]), protected("SHA256:a", &[])]);
         assert!(!signerless_review_count_holds(Mode::Team, &same_key));
+    }
+}
+
+#[cfg(test)]
+mod binding_tests {
+    use super::*;
+    use crate::gate::Gate;
+    use crate::verdict::{Finding, GateStatus, decide};
+    use crate::wire::{Wire, WireClass, WireKind};
+
+    /// PB §6: "`H ≠ review.head`, or `merge-tree(review.base, H) ≠
+    /// review.tree` — the branch changed → same state, **review void**."
+    ///
+    /// MF §5.10 and §4.8.6 both require every discharging review to carry
+    /// `head=Hc` and a `tree=` equal to the tree under evaluation. Until
+    /// 2026-08-28 `Review` could not express either, so **every override was
+    /// granted without the binding** and a review signed against a branch state
+    /// that no longer exists discharged a current finding.
+    #[test]
+    fn a_void_review_discharges_nothing() {
+        let wire = Wire::at(
+            Gate::G2,
+            &b"src/a.ts"[..],
+            WireClass::Tripwire,
+            WireKind::Finding,
+        );
+        let token = wire.token();
+        let findings = vec![Finding::coverable((), wire)];
+
+        let current = Reviews::new(vec![
+            Review::new(ReviewClass::Tripwire, "SHA256:bob", Binding::Current)
+                .naming([token.clone()]),
+        ]);
+        assert_eq!(
+            decide(Gate::G2, findings.clone(), &current).status,
+            GateStatus::Override
+        );
+
+        // Same reviewer, same wires, same class — signed against a branch state
+        // that has moved.
+        let void = Reviews::new(vec![
+            Review::new(ReviewClass::Tripwire, "SHA256:bob", Binding::Void).naming([token.clone()]),
+        ]);
+        assert_eq!(
+            decide(Gate::G2, findings, &void).status,
+            GateStatus::Fail,
+            "the branch changed, so the review is void and covers nothing"
+        );
+
+        // It still *said* what it said, which PB §5.4's retention rules need.
+        assert!(
+            void.all()[0].names_regardless_of_binding(&token),
+            "a void review is void, not forgotten"
+        );
+        assert!(!void.all()[0].names(&token));
+    }
+
+    /// A struct literal that forgets the binding fails closed rather than
+    /// defaulting to current — `Review::new` takes it as an argument so this
+    /// state is unreachable through the constructor at all.
+    #[test]
+    fn an_unbound_review_fails_closed() {
+        let review = Review {
+            class: ReviewClass::Protected,
+            fingerprint: "SHA256:bob".into(),
+            self_approved: false,
+            wires: vec!["G14:.spine/ci.sh".into()],
+            binding: None,
+        };
+        assert!(!review.names("G14:.spine/ci.sh"));
     }
 }

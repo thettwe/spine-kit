@@ -200,19 +200,42 @@ pub fn evaluate(input: &G1Input<'_>, reviews: &Reviews) -> Coverage {
             continue;
         }
 
-        // Which record supplies the path: "the pair's `result` record `path`
-        // where the file carries one, its `base` record `path` where it does
-        // not" (RF §8.5). "Where the two records for one pair disagree on
-        // `path`, that is not an error and neither record is rejected."
-        let result_path = file
+        // **The two gates take their path from different records**, and RF
+        // legalizes the disagreement rather than forbidding it: "Where the two
+        // records for one pair disagree on `path`, that is not an error and
+        // neither record is rejected."
+        //
+        // **G1** takes "the pair's `result` record `path` where the file
+        // carries one, its `base` record `path` where it does not" (RF §8.5) —
+        // that sentence introduces the *per-clause* list under "A per-id
+        // finding takes `G1:` + `tok(path)`", so it is G1's rule.
+        //
+        // **G8 takes `b.path`**, always. RF §8.5 clause 2 writes `G8:<b.path>`
+        // three times and RF §13 R19 a fourth: "both are a **G8** finding
+        // `G8:<b.path>`" … "Both gates fail: G8 on `G8:<b.path>`, G1 on the
+        // pair."
+        //
+        // Using G1's path for both wrote `G8:new/t.py` where a conforming
+        // implementation writes `G8:old/t.py` — a different `wires` array, a
+        // different `report=` and a different `envelope=` over identical
+        // objects, and a protected review naming the conforming token
+        // discharging nothing.
+        let g1_path = file
             .results
             .iter()
             .find(|r| r.runner.as_str() == b.runner.as_str() && r.id == b.id)
-            .map(|r| r.path.as_str());
-        let path = result_path.unwrap_or(b.path.as_str());
+            .map(|r| r.path.as_str())
+            .unwrap_or(b.path.as_str());
+        let path = g1_path;
 
         // The G8 half — suppressed entirely under clause 0.
-        let g8_token = Wire::at(Gate::G8, path, WireClass::Protected, WireKind::Finding).token();
+        let g8_token = Wire::at(
+            Gate::G8,
+            b.path.as_str(),
+            WireClass::Protected,
+            WireKind::Finding,
+        )
+        .token();
         if complete {
             g8.push(Finding {
                 status: G8Status::LandedId,
@@ -221,9 +244,12 @@ pub fn evaluate(input: &G1Input<'_>, reviews: &Reviews) -> Coverage {
                 // `class=protected` `G8:<path>` review, which is what PB §6.3
                 // means by "unless that review names its path".
                 kind: FindingKind::Coverable,
+                // `b.path`, not `path`. `path` is G1's — the result record's
+                // where one exists — and G8's is the base record's, always
+                // (RF §8.5 clause 2, RF §13 R19).
                 wire: Some(Wire::at(
                     Gate::G8,
-                    path,
+                    b.path.as_str(),
                     G8Status::LandedId.class(),
                     WireKind::Finding,
                 )),
@@ -241,10 +267,8 @@ pub fn evaluate(input: &G1Input<'_>, reviews: &Reviews) -> Coverage {
         // token degrades to the bare `G8` (`Wire::at`'s fail-closed rule), and a
         // break-glass-shaped review naming `G8` would silently excuse G1 for
         // every id the collector could not locate in the tree.
-        let excused = !collected_on_t
-            && complete
-            && !path.is_empty()
-            && reviews.protected_names(&g8_token);
+        let excused =
+            !collected_on_t && complete && !path.is_empty() && reviews.protected_names(&g8_token);
         if !excused {
             let status = if collected_on_t {
                 G1Status::LandedIdNotPassed
@@ -273,11 +297,7 @@ pub fn evaluate(input: &G1Input<'_>, reviews: &Reviews) -> Coverage {
     finish(g1, g8, reviews)
 }
 
-fn finish(
-    g1: Vec<Finding<G1Status>>,
-    g8: Vec<Finding<G8Status>>,
-    reviews: &Reviews,
-) -> Coverage {
+fn finish(g1: Vec<Finding<G1Status>>, g8: Vec<Finding<G8Status>>, reviews: &Reviews) -> Coverage {
     Coverage {
         g1: decide(Gate::G1, g1, reviews),
         g8_landed_id: g8,
@@ -287,7 +307,7 @@ fn finish(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::review::{Review, ReviewClass};
+    use crate::review::{Binding, Review, ReviewClass};
     use crate::verdict::GateStatus;
     use spine_collect::record::{BaseRecord, ResultRecord, RunnerToken, Status};
     use spine_collect::{BaseOutcome, Header, Profile, Provenance};
@@ -353,7 +373,11 @@ mod tests {
     fn a_per_id_finding_takes_g1_plus_tok_of_the_path() {
         let f = file(
             Status::Complete,
-            vec![base("t.py::a", BaseOutcome::Reported(Outcome::Passed), "t.py")],
+            vec![base(
+                "t.py::a",
+                BaseOutcome::Reported(Outcome::Passed),
+                "t.py",
+            )],
             vec![result("t.py::a", "t.py::a", Outcome::Failed, "t b.py")],
         );
         let out = evaluate(&input(&f, LandingShape::GatedLand), &Reviews::default());
@@ -383,7 +407,7 @@ mod tests {
     #[test]
     fn a_quick_lane_result_missing_is_terminal_under_a_protected_review() {
         let reviews = Reviews::new(vec![
-            Review::new(ReviewClass::Protected, "SHA256:a").naming(vec!["G1"]),
+            Review::new(ReviewClass::Protected, "SHA256:a", Binding::Current).naming(vec!["G1"]),
         ]);
         let out = evaluate(
             &G1Input {
@@ -403,8 +427,8 @@ mod tests {
     #[test]
     fn a_reseals_own_protected_review_admits_result_missing() {
         let reviews = Reviews::new(vec![
-            Review::new(ReviewClass::Protected, "SHA256:a").naming(vec!["G1"]),
-            Review::new(ReviewClass::Protected, "SHA256:b").naming(vec!["G1"]),
+            Review::new(ReviewClass::Protected, "SHA256:a", Binding::Current).naming(vec!["G1"]),
+            Review::new(ReviewClass::Protected, "SHA256:b", Binding::Current).naming(vec!["G1"]),
         ]);
         let out = evaluate(
             &G1Input {
@@ -425,7 +449,11 @@ mod tests {
     fn an_xfail_on_b_that_still_collects_on_t_is_no_finding_in_either_gate() {
         let f = file(
             Status::Complete,
-            vec![base("t.py::a", BaseOutcome::Reported(Outcome::Xfail), "t.py")],
+            vec![base(
+                "t.py::a",
+                BaseOutcome::Reported(Outcome::Xfail),
+                "t.py",
+            )],
             vec![result("t.py::a", "t.py::a", Outcome::Failed, "t.py")],
         );
         let out = evaluate(&input(&f, LandingShape::GatedLand), &Reviews::default());
@@ -468,7 +496,11 @@ mod tests {
     fn a_vanished_xfail_id_is_still_g8s_finding() {
         let f = file(
             Status::Complete,
-            vec![base("t.py::a", BaseOutcome::Reported(Outcome::Xfail), "t.py")],
+            vec![base(
+                "t.py::a",
+                BaseOutcome::Reported(Outcome::Xfail),
+                "t.py",
+            )],
             vec![],
         );
         let out = evaluate(&input(&f, LandingShape::GatedLand), &Reviews::default());
@@ -486,11 +518,16 @@ mod tests {
     #[test]
     fn a_g8_path_review_moves_the_went_away_finding_off_g1_entirely() {
         let reviews = Reviews::new(vec![
-            Review::new(ReviewClass::Protected, "SHA256:a").naming(vec!["G8:t.py"]),
+            Review::new(ReviewClass::Protected, "SHA256:a", Binding::Current)
+                .naming(vec!["G8:t.py"]),
         ]);
         let f = file(
             Status::Complete,
-            vec![base("t.py::a", BaseOutcome::Reported(Outcome::Passed), "t.py")],
+            vec![base(
+                "t.py::a",
+                BaseOutcome::Reported(Outcome::Passed),
+                "t.py",
+            )],
             vec![],
         );
         let out = evaluate(&input(&f, LandingShape::GatedLand), &reviews);
@@ -506,11 +543,16 @@ mod tests {
     #[test]
     fn the_g8_review_exemption_does_not_reach_an_id_that_collected_and_failed() {
         let reviews = Reviews::new(vec![
-            Review::new(ReviewClass::Protected, "SHA256:a").naming(vec!["G8:t.py"]),
+            Review::new(ReviewClass::Protected, "SHA256:a", Binding::Current)
+                .naming(vec!["G8:t.py"]),
         ]);
         let f = file(
             Status::Complete,
-            vec![base("t.py::a", BaseOutcome::Reported(Outcome::Passed), "t.py")],
+            vec![base(
+                "t.py::a",
+                BaseOutcome::Reported(Outcome::Passed),
+                "t.py",
+            )],
             vec![result("t.py::a", "t.py::a", Outcome::Failed, "t.py")],
         );
         let out = evaluate(&input(&f, LandingShape::GatedLand), &reviews);
@@ -525,7 +567,11 @@ mod tests {
     fn a_partial_run_makes_no_g8_allocation_and_still_names_the_pairs() {
         let f = file(
             Status::RunnerTimeout,
-            vec![base("t.py::a", BaseOutcome::Reported(Outcome::Passed), "t.py")],
+            vec![base(
+                "t.py::a",
+                BaseOutcome::Reported(Outcome::Passed),
+                "t.py",
+            )],
             vec![result("t.py::a", "t.py::a", Outcome::Passed, "t.py")],
         );
         let out = evaluate(&input(&f, LandingShape::GatedLand), &Reviews::default());
@@ -621,7 +667,12 @@ mod tests {
         let f = file(
             Status::Complete,
             vec![],
-            vec![result("t.py::totals", "t.py::totals", Outcome::Passed, "t.py")],
+            vec![result(
+                "t.py::totals",
+                "t.py::totals",
+                Outcome::Passed,
+                "t.py",
+            )],
         );
         let out = evaluate(
             &G1Input {
@@ -670,7 +721,11 @@ mod tests {
     fn the_carve_out_does_not_reach_a_frozen_entry() {
         let f = file(
             Status::Complete,
-            vec![base("t.py::a", BaseOutcome::Reported(Outcome::Xfail), "t.py")],
+            vec![base(
+                "t.py::a",
+                BaseOutcome::Reported(Outcome::Xfail),
+                "t.py",
+            )],
             vec![result("t.py::a", "t.py::a", Outcome::Xfail, "t.py")],
         );
         let out = evaluate(
@@ -703,7 +758,10 @@ mod tests {
             )],
             vec![],
         );
-        let out = evaluate(&input(&went_away, LandingShape::GatedLand), &Reviews::default());
+        let out = evaluate(
+            &input(&went_away, LandingShape::GatedLand),
+            &Reviews::default(),
+        );
         assert_eq!(out.g1.wires.tokens(), ["G1:old/t.py"]);
 
         let disagreeing = file(
@@ -720,6 +778,29 @@ mod tests {
             &Reviews::default(),
         );
         assert_eq!(out.g1.wires.tokens(), ["G1:new/t.py"]);
+
+        // **And G8 takes the BASE record's path on the same pair.** This is the
+        // assertion the test was missing: it built the disagreeing case, checked
+        // G1, and let G8 borrow G1's path.
+        //
+        // RF §8.5 clause 2 writes `G8:<b.path>` three times and RF §13 R19 a
+        // fourth. RF legalizes the disagreement — "Where the two records for
+        // one pair disagree on `path`, that is not an error" — so the two gates
+        // genuinely name different paths for one id, and an implementation that
+        // uses one path for both produces a different `wires` array, a
+        // different `report=` and a different `envelope=` over identical
+        // objects. A protected review naming the conforming `G8:old/t.py` then
+        // discharges nothing.
+        let g8_tokens: Vec<String> = out
+            .g8_landed_id
+            .iter()
+            .filter_map(|f| f.wire.as_ref().map(|w| w.token()))
+            .collect();
+        assert_eq!(
+            g8_tokens,
+            ["G8:old/t.py"],
+            "G8 names the base record's path, G1 the result record's"
+        );
     }
 
     /// RF §8.5, §13 R19: "An empty `b.path` names no path, can satisfy no
@@ -727,7 +808,8 @@ mod tests {
     #[test]
     fn an_empty_path_takes_the_bare_g1_and_satisfies_no_exemption() {
         let reviews = Reviews::new(vec![
-            Review::new(ReviewClass::Protected, "SHA256:a").naming(vec!["G8:", "G8"]),
+            Review::new(ReviewClass::Protected, "SHA256:a", Binding::Current)
+                .naming(vec!["G8:", "G8"]),
         ]);
         let f = file(
             Status::Complete,
@@ -746,7 +828,11 @@ mod tests {
     fn the_carve_out_is_unconditional_on_a_reseal_and_its_boundaries_read_override() {
         let carved = file(
             Status::Complete,
-            vec![base("t.py::a", BaseOutcome::Reported(Outcome::Xfail), "t.py")],
+            vec![base(
+                "t.py::a",
+                BaseOutcome::Reported(Outcome::Xfail),
+                "t.py",
+            )],
             vec![result("t.py::a", "t.py::a", Outcome::Failed, "t.py")],
         );
         let out = evaluate(&input(&carved, LandingShape::Reseal), &Reviews::default());
@@ -755,12 +841,18 @@ mod tests {
         // The boundary: `b.out` was neither `xfail` nor `skipped`.
         let boundary = file(
             Status::Complete,
-            vec![base("t.py::a", BaseOutcome::Reported(Outcome::Passed), "t.py")],
+            vec![base(
+                "t.py::a",
+                BaseOutcome::Reported(Outcome::Passed),
+                "t.py",
+            )],
             vec![result("t.py::a", "t.py::a", Outcome::Failed, "t.py")],
         );
         let reviews = Reviews::new(vec![
-            Review::new(ReviewClass::Protected, "SHA256:a").naming(vec!["G1:t.py"]),
-            Review::new(ReviewClass::Protected, "SHA256:b").naming(vec!["G1:t.py"]),
+            Review::new(ReviewClass::Protected, "SHA256:a", Binding::Current)
+                .naming(vec!["G1:t.py"]),
+            Review::new(ReviewClass::Protected, "SHA256:b", Binding::Current)
+                .naming(vec!["G1:t.py"]),
         ]);
         let out = evaluate(&input(&boundary, LandingShape::Reseal), &reviews);
         assert_eq!(out.g1.status, GateStatus::Override);
@@ -785,8 +877,9 @@ mod tests {
     /// it reaches G1.
     #[test]
     fn a_break_glass_review_naming_g1_reads_override() {
-        let reviews =
-            Reviews::new(vec![Review::new(ReviewClass::BreakGlass, "SHA256:a").naming(vec!["G1"])]);
+        let reviews = Reviews::new(vec![
+            Review::new(ReviewClass::BreakGlass, "SHA256:a", Binding::Current).naming(vec!["G1"]),
+        ]);
         let out = evaluate(
             &G1Input {
                 ingestion: Ingestion::Missing,

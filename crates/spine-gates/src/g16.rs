@@ -17,6 +17,8 @@
 //! by its own author in team mode." Break-glass cannot bypass it — PB §7.6's
 //! list has no Authority gate on it.
 
+use std::collections::BTreeMap;
+
 use crate::gate::Gate;
 use crate::review::Reviews;
 use crate::status::G16Status;
@@ -139,7 +141,10 @@ pub enum ScaffoldState {
 /// (the `path#region` spelling for a managed region, MF §3.7).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScaffoldObservation {
-    pub path: String,
+    /// The record's `path`, **decoded** — `FileRecord::path_raw`, not
+    /// `FileRecord::path`. The wire built from it is `tok(path)`, and feeding
+    /// it the stored `esc` spelling would escape it twice.
+    pub path: Vec<u8>,
     pub state: ScaffoldState,
 }
 
@@ -200,13 +205,20 @@ pub struct Rollback {
     /// canonical-bytes comparison, "stronger than PB §7.5's 'every frozen field
     /// and every `files[]` record'".
     pub manifest_equals_ancestor_but_paths: bool,
-    /// Step 4: MF §6.7.1's monotone union.
-    pub paths_are_the_monotone_union: bool,
+    /// Step 4's input: `A`, the ancestor manifest. The union itself is
+    /// **computed** by [`paths_are_the_monotone_union`], not asserted — the
+    /// caller supplies the manifest and the gate supplies the rule.
+    ///
+    /// `None` when `A` did not parse, in which case step 2's finding above
+    /// already stands and step 4 is not applicable.
+    pub ancestor: Option<Manifest>,
     /// Step 5, per path of MF §6.7.2's `P`: paths that should have been
     /// restored and were not.
-    pub paths_not_restored: Vec<String>,
-    /// Step 5: paths that should have been deleted and were not.
-    pub paths_not_deleted: Vec<String>,
+    /// Raw path bytes, decoded from the `files(A) \u{222a} files(M_B)` records
+    /// they are drawn from.
+    pub paths_not_restored: Vec<Vec<u8>>,
+    /// Step 5: paths that should have been deleted and were not. Raw bytes.
+    pub paths_not_deleted: Vec<Vec<u8>>,
     /// Step 6: "no `user-owned` path of either manifest appears in
     /// `diff(tree(B), T)`."
     pub no_user_owned_touched: bool,
@@ -238,20 +250,57 @@ pub struct G16Input<'a> {
     /// the keyring it is landing *onto* and by G16 for the keyring it is
     /// landing. Both readings are wanted" (MF §4.8.4).
     pub keyring_t: &'a Keyring,
-    /// Check 14: "`T` contains no path under `.spine/cache/`."
-    pub staging_residue: Vec<String>,
+    /// Check 14: "`T` contains no path under `.spine/cache/`." Raw bytes,
+    /// straight from `ls-tree -z --name-only`, which is where they come from.
+    pub staging_residue: Vec<Vec<u8>>,
     pub constitution: ConstitutionLint,
     pub uninstall: Uninstall,
     pub reinit: Reinit,
     pub rollback: Rollback,
 }
 
-fn at(path: &str) -> Wire {
-    Wire::at(Gate::G16, path, WireClass::Protected, WireKind::Finding)
+/// `path` is **raw bytes**, per `Wire`'s contract. A manifest value arrives
+/// `esc`-encoded (MF §2.3) and must be decoded first — `Manifest::path_raw`
+/// and `floor_entries_raw` exist for exactly this crossing. Passing the
+/// encoded spelling produces `tok(esc(p))`, doubly escaped, for any path
+/// carrying a backslash or a byte outside printable ASCII.
+fn at(path: impl AsRef<[u8]>) -> Wire {
+    Wire::at(
+        Gate::G16,
+        path.as_ref().to_vec(),
+        WireClass::Protected,
+        WireKind::Finding,
+    )
 }
 
+/// GR §6.3's G16 row assigns the gate a token **unconditionally**: "`G16:` +
+/// `tok(path)` where a path is implicated, **bare `G16`** where none is."
+///
+/// Twenty outright findings carried no wire at all until 2026-08-28, on the
+/// reading that they "refuse the run before a wire could be read by anyone".
+/// GR §5.6.1 says the opposite in terms — "**Outright is a coverage rule, never
+/// a containment rule** … [containment] includes every entry of the array,
+/// **outright findings among them**. So a landing that carries an outright wire
+/// and reaches a review state at all needs that wire **named**" — and it is the
+/// report a reviewer reads and binds with `report=`. A short `wires` array is a
+/// different array, hence a different `report=` and `envelope=`, over identical
+/// objects.
+///
+/// G14 is the one gate the corpus exempts, and `g14.rs` argues that position
+/// explicitly; G16 has no such exemption.
 fn bare() -> Wire {
     Wire::pathless(Gate::G16, WireClass::Protected, WireKind::Finding)
+}
+
+/// The repository's constitution path, which every `constitution-*` finding
+/// implicates.
+///
+/// DERIVED: `G16Input` does not carry `paths.constitution`, so the wire names
+/// the seeded default. A repository that moved its constitution gets a wire
+/// naming a path it does not have — worth carrying the real value, and a change
+/// to the input type rather than to this gate's rule.
+fn constitution_path() -> Wire {
+    at("CONSTITUTION.md")
 }
 
 /// MF §6.2, executed in order.
@@ -295,7 +344,7 @@ pub fn evaluate(input: &G16Input<'_>, reviews: &Reviews) -> Verdict<G16Status> {
     // "*(if the landing is a rollback, §6.7 runs here, before everything
     // below)*" (MF §6.2).
     if input.upgrade.is_some_and(Upgrade::is_rollback) {
-        rollback_findings(&input.rollback, &mut findings);
+        rollback_findings(&input.rollback, manifest, input.manifest_b, &mut findings);
     }
 
     // ---- 9 — the scaffold blobs (coverable) ----------------------------
@@ -330,12 +379,18 @@ pub fn evaluate(input: &G16Input<'_>, reviews: &Reviews) -> Verdict<G16Status> {
     if let Some(upgrade) = input.upgrade {
         // MF §6.4: `manifest` is "the git blob id of `.spine/manifest.json` in
         // `T`, or `none` when `to=none`".
-        let expected = if upgrade.is_uninstall() {
-            "none"
+        // A non-uninstall upgrade whose `T` has no `.spine/manifest.json` has
+        // nothing for `manifest=` to agree with, and `unwrap_or_default` made
+        // that the empty string — which an envelope carrying an empty
+        // `manifest=` then matched. Absent is a mismatch, not a blank to be
+        // filled: `None` here means the blob the line names is not in the
+        // tree.
+        let expected: Option<&str> = if upgrade.is_uninstall() {
+            Some("none")
         } else {
-            input.manifest_blob_in_t.unwrap_or_default()
+            input.manifest_blob_in_t
         };
-        if upgrade.manifest != expected {
+        if Some(upgrade.manifest.as_str()) != expected {
             findings.push(Finding::outright_with_wire(
                 G16Status::UpgradeManifestMismatch,
                 at(".spine/manifest.json"),
@@ -345,7 +400,10 @@ pub fn evaluate(input: &G16Input<'_>, reviews: &Reviews) -> Verdict<G16Status> {
             && !upgrade.is_uninstall()
             && upgrade.to != manifest.cli_version()
         {
-            findings.push(Finding::outright(G16Status::UpgradeVersionMismatch));
+            findings.push(Finding::outright_with_wire(
+                G16Status::UpgradeVersionMismatch,
+                at(".spine/manifest.json"),
+            ));
         }
         // MF §6.4: "`forced=`'s decoded set must equal `derived_forced`
         // exactly. A path in the line and not in the set is a claim of an
@@ -358,7 +416,10 @@ pub fn evaluate(input: &G16Input<'_>, reviews: &Reviews) -> Verdict<G16Status> {
         derived.sort_unstable();
         derived.dedup();
         if declared != derived {
-            findings.push(Finding::outright(G16Status::ForcedDisagrees));
+            findings.push(Finding::outright_with_wire(
+                G16Status::ForcedDisagrees,
+                bare(),
+            ));
         }
     }
 
@@ -415,15 +476,27 @@ pub fn evaluate(input: &G16Input<'_>, reviews: &Reviews) -> Verdict<G16Status> {
     // ---- 15 — the constitution lint ------------------------------------
     let lint = &input.constitution;
     if !lint.present {
-        findings.push(Finding::outright(G16Status::ConstitutionMissing));
+        findings.push(Finding::outright_with_wire(
+            G16Status::ConstitutionMissing,
+            constitution_path(),
+        ));
     } else if !lint.parses {
-        findings.push(Finding::outright(G16Status::ConstitutionUnparseable));
+        findings.push(Finding::outright_with_wire(
+            G16Status::ConstitutionUnparseable,
+            constitution_path(),
+        ));
     } else {
         if !lint.all_twelve_rules_present {
-            findings.push(Finding::outright(G16Status::ConstitutionRuleMissing));
+            findings.push(Finding::outright_with_wire(
+                G16Status::ConstitutionRuleMissing,
+                constitution_path(),
+            ));
         }
         if !lint.every_rule_in_domain {
-            findings.push(Finding::outright(G16Status::ConstitutionRuleOutOfDomain));
+            findings.push(Finding::outright_with_wire(
+                G16Status::ConstitutionRuleOutOfDomain,
+                constitution_path(),
+            ));
         }
         if !lint.version_moved_if_blob_moved {
             findings.push(Finding::coverable(
@@ -437,21 +510,36 @@ pub fn evaluate(input: &G16Input<'_>, reviews: &Reviews) -> Verdict<G16Status> {
     if uninstalling {
         let u = &input.uninstall;
         if !u.every_spine_owned_path_absent {
-            findings.push(Finding::outright(G16Status::UninstallPathRemains));
+            findings.push(Finding::outright_with_wire(
+                G16Status::UninstallPathRemains,
+                bare(),
+            ));
         }
         if !u.every_managed_region_marker_free {
-            findings.push(Finding::outright(G16Status::UninstallRegionRemains));
+            findings.push(Finding::outright_with_wire(
+                G16Status::UninstallRegionRemains,
+                bare(),
+            ));
         }
         if !u.no_user_owned_touched {
-            findings.push(Finding::outright(G16Status::UninstallUserOwnedTouched));
+            findings.push(Finding::outright_with_wire(
+                G16Status::UninstallUserOwnedTouched,
+                bare(),
+            ));
         }
         // "The keyring clause is not redundant with the `user-owned` clause: it
         // is what makes a later re-init's `since=` check meaningful."
         if !u.keyring_byte_identical {
-            findings.push(Finding::outright(G16Status::UninstallKeyringChanged));
+            findings.push(Finding::outright_with_wire(
+                G16Status::UninstallKeyringChanged,
+                at(".spine/allowed_signers"),
+            ));
         }
         if !u.constitution_byte_identical {
-            findings.push(Finding::outright(G16Status::UninstallConstitutionChanged));
+            findings.push(Finding::outright_with_wire(
+                G16Status::UninstallConstitutionChanged,
+                constitution_path(),
+            ));
         }
     }
 
@@ -459,37 +547,66 @@ pub fn evaluate(input: &G16Input<'_>, reviews: &Reviews) -> Verdict<G16Status> {
     if reiniting {
         let r = &input.reinit;
         if !r.since_present {
-            findings.push(Finding::outright(G16Status::ReinitSinceMissing));
+            findings.push(Finding::outright_with_wire(
+                G16Status::ReinitSinceMissing,
+                bare(),
+            ));
         } else if !r.since_is_a_valid_uninstall_landing {
-            findings.push(Finding::outright(G16Status::ReinitSinceNotUninstall));
+            findings.push(Finding::outright_with_wire(
+                G16Status::ReinitSinceNotUninstall,
+                bare(),
+            ));
         }
         if !r.keyring_matches_since {
-            findings.push(Finding::outright(G16Status::ReinitKeyringDiffers));
+            findings.push(Finding::outright_with_wire(
+                G16Status::ReinitKeyringDiffers,
+                at(".spine/allowed_signers"),
+            ));
         }
     }
 
     decide(Gate::G16, findings, reviews)
 }
 
-fn rollback_findings(rollback: &Rollback, findings: &mut Vec<Finding<G16Status>>) {
+fn rollback_findings(
+    rollback: &Rollback,
+    manifest_t: Option<&Manifest>,
+    manifest_b: Option<&Manifest>,
+    findings: &mut Vec<Finding<G16Status>>,
+) {
     if !rollback.ancestor_reachable {
-        findings.push(Finding::outright(G16Status::RestoreAncestorUnreachable));
+        findings.push(Finding::outright_with_wire(
+            G16Status::RestoreAncestorUnreachable,
+            bare(),
+        ));
     }
     if !rollback.ancestor_manifest_well_formed {
-        findings.push(Finding::outright(
+        findings.push(Finding::outright_with_wire(
             G16Status::RestoreAncestorManifestMalformed,
+            bare(),
         ));
     }
     // "*Recovery undoes one lifecycle landing per landing and no more*
     // (PB §7.5). A deeper rollback is a chain of single steps."
     if !rollback.is_one_step {
-        findings.push(Finding::outright(G16Status::RestoreNotOneStep));
+        findings.push(Finding::outright_with_wire(
+            G16Status::RestoreNotOneStep,
+            bare(),
+        ));
     }
     if !rollback.manifest_equals_ancestor_but_paths {
-        findings.push(Finding::outright(G16Status::RestoreManifestDiffers));
+        findings.push(Finding::outright_with_wire(
+            G16Status::RestoreManifestDiffers,
+            at(".spine/manifest.json"),
+        ));
     }
-    if !rollback.paths_are_the_monotone_union {
-        findings.push(Finding::outright(G16Status::RestorePathsNotUnion));
+    if let (Some(ancestor), Some(m_t), Some(m_b)) = (&rollback.ancestor, manifest_t, manifest_b)
+        && !paths_are_the_monotone_union(m_t, ancestor, m_b)
+    {
+        findings.push(Finding::outright_with_wire(
+            G16Status::RestorePathsNotUnion,
+            at(".spine/manifest.json"),
+        ));
     }
     // "**On step 5, and why it is not read from the diff.** … A diff-driven
     // check sees only what changed; a manifest-driven check sees what should be
@@ -507,7 +624,10 @@ fn rollback_findings(rollback: &Rollback, findings: &mut Vec<Finding<G16Status>>
         ));
     }
     if !rollback.no_user_owned_touched {
-        findings.push(Finding::outright(G16Status::RestoreUserOwnedTouched));
+        findings.push(Finding::outright_with_wire(
+            G16Status::RestoreUserOwnedTouched,
+            bare(),
+        ));
     }
 }
 
@@ -522,6 +642,53 @@ fn rollback_findings(rollback: &Rollback, findings: &mut Vec<Finding<G16Status>>
 /// §3.4's canonical shape — a string for a singleton, a sorted array for two or
 /// more. *The floor never shrinks, not even on rollback, and `B` is what the
 /// floor has become since*."
+/// **Decided, not asserted.** Step 4 was a caller-supplied bool with this
+/// function sitting unused beside it — the shape the corpus objects to
+/// wherever it appears, since the one place the rule is written down is then
+/// the one place nothing executes.
+///
+/// The canonical shape is not re-checked here: `Manifest::parse` refuses a
+/// one-element array, an unsorted array and a duplicate (MF §3.4), so a
+/// `Manifest` that exists has it. That is why this takes three manifests and
+/// not three JSON values.
+pub fn paths_are_the_monotone_union(m_t: &Manifest, ancestor: &Manifest, m_b: &Manifest) -> bool {
+    let t = paths_map(m_t);
+    let a = paths_map(ancestor);
+    let b = paths_map(m_b);
+
+    let mut expected_keys: Vec<&str> = a.keys().chain(b.keys()).copied().collect();
+    expected_keys.sort_unstable();
+    expected_keys.dedup();
+
+    let actual_keys: Vec<&str> = {
+        let mut k: Vec<&str> = t.keys().copied().collect();
+        k.sort_unstable();
+        k
+    };
+    if actual_keys != expected_keys {
+        return false;
+    }
+
+    expected_keys.iter().all(|key| {
+        // "with an absent key contributing the empty set".
+        let union = monotone_union(
+            a.get(key).map(Vec::as_slice).unwrap_or_default(),
+            b.get(key).map(Vec::as_slice).unwrap_or_default(),
+        );
+        t.get(key).map(|v| {
+            let mut v = v.clone();
+            v.sort_unstable();
+            v.dedup();
+            v
+        }) == Some(union)
+    })
+}
+
+fn paths_map(m: &Manifest) -> BTreeMap<&str, Vec<&str>> {
+    m.paths_by_key().into_iter().collect()
+}
+
+/// One key's value union, the inner line of the rule above.
 pub fn monotone_union<'a>(ancestor: &[&'a str], base: &[&'a str]) -> Vec<&'a str> {
     let mut out: Vec<&str> = ancestor.iter().chain(base.iter()).copied().collect();
     out.sort_unstable();
@@ -532,7 +699,7 @@ pub fn monotone_union<'a>(ancestor: &[&'a str], base: &[&'a str]) -> Vec<&'a str
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::review::{Review, ReviewClass};
+    use crate::review::{Binding, Review, ReviewClass};
     use crate::verdict::GateStatus;
     use spine_canon::ObjectFormat;
 
@@ -570,6 +737,27 @@ mod tests {
             resign,
             resign,
             resign,
+        );
+        Manifest::parse(json.as_bytes(), Some(ObjectFormat::Sha1)).expect("a conforming manifest")
+    }
+
+    /// The same shape as [`manifest`] with `paths` supplied verbatim, for the
+    /// step-4 union, which reads nothing else.
+    fn manifest_with_paths(paths: &str) -> Manifest {
+        let json = format!(
+            concat!(
+                r#"{{"cli":{{"dist_hash":"sha256:{}","version":"1.4.0"}},"#,
+                r#""envelope":1,"files":[],"manifest_version":1,"object_format":"sha1","#,
+                r#""params":{{"ci":"github","isolation":"container","langs":["python"],"#,
+                r#""timeout":1800,"trunk":"main"}},"#,
+                r#""paths":{{{}}},"#,
+                r#""repo":"myrepo","#,
+                r#""resign":{{"intent":2,"intent-bug":2,"intent-change":2}},"#,
+                r#""schema":7,"#,
+                r#""templates":{{"intent":2,"intent-bug":2,"intent-change":2}}}}"#,
+                "\n"
+            ),
+            "980d4cb66bc03353cdb93d9149ead2ec7aae73c8e1ab6ade536eb8628acd0753", paths,
         );
         Manifest::parse(json.as_bytes(), Some(ObjectFormat::Sha1)).expect("a conforming manifest")
     }
@@ -707,7 +895,8 @@ mod tests {
         assert_eq!(uncovered.wires.tokens(), ["G16:.spine/ci.sh"]);
 
         let reviews = Reviews::new(vec![
-            Review::new(ReviewClass::Protected, "SHA256:b").naming(vec!["G16:.spine/ci.sh"]),
+            Review::new(ReviewClass::Protected, "SHA256:b", Binding::Current)
+                .naming(vec!["G16:.spine/ci.sh"]),
         ]);
         assert_eq!(evaluate(&i, &reviews).status, GateStatus::Override);
     }
@@ -801,8 +990,9 @@ mod tests {
         let uncovered = evaluate(&i, &Reviews::default());
         assert_eq!(uncovered.status, GateStatus::Fail);
         assert_eq!(uncovered.wires.tokens(), ["G16"]);
-        let reviews =
-            Reviews::new(vec![Review::new(ReviewClass::Protected, "SHA256:b").naming(vec!["G16"])]);
+        let reviews = Reviews::new(vec![
+            Review::new(ReviewClass::Protected, "SHA256:b", Binding::Current).naming(vec!["G16"]),
+        ]);
         assert_eq!(evaluate(&i, &reviews).status, GateStatus::Override);
     }
 
@@ -814,8 +1004,10 @@ mod tests {
         let m = manifest(&["python"], 2, "uid");
         let k = keyring_clean();
         let reviews = Reviews::new(vec![
-            Review::new(ReviewClass::Protected, "SHA256:a").naming(vec!["G16:.spine/manifest.json"]),
-            Review::new(ReviewClass::Protected, "SHA256:b").naming(vec!["G16:.spine/manifest.json"]),
+            Review::new(ReviewClass::Protected, "SHA256:a", Binding::Current)
+                .naming(vec!["G16:.spine/manifest.json"]),
+            Review::new(ReviewClass::Protected, "SHA256:b", Binding::Current)
+                .naming(vec!["G16:.spine/manifest.json"]),
         ]);
         let verdict = evaluate(&input(&m, Some(&m), &k), &reviews);
         assert_eq!(verdict.status, GateStatus::Fail);
@@ -907,7 +1099,9 @@ mod tests {
             ancestor_manifest_well_formed: true,
             is_one_step: false,
             manifest_equals_ancestor_but_paths: true,
-            paths_are_the_monotone_union: true,
+            // `A` is `M_T` here, whose `paths` is trivially its own union with
+            // itself — step 4 holds and this test is about steps 2 and 5.
+            ancestor: Some(m.clone()),
             paths_not_restored: vec![".spine/ci.sh".into()],
             paths_not_deleted: vec![],
             no_user_owned_touched: false,
@@ -916,8 +1110,10 @@ mod tests {
         // check 10's `upgrade-version-mismatch` — deliberately left in, because
         // it is what a rollback with the wrong `to=` looks like.
         let reviews = Reviews::new(vec![
-            Review::new(ReviewClass::Protected, "SHA256:a").naming(vec!["G16", "G16:.spine/ci.sh"]),
-            Review::new(ReviewClass::Protected, "SHA256:b").naming(vec!["G16", "G16:.spine/ci.sh"]),
+            Review::new(ReviewClass::Protected, "SHA256:a", Binding::Current)
+                .naming(vec!["G16", "G16:.spine/ci.sh"]),
+            Review::new(ReviewClass::Protected, "SHA256:b", Binding::Current)
+                .naming(vec!["G16", "G16:.spine/ci.sh"]),
         ]);
         let verdict = evaluate(&i, &reviews);
         assert_eq!(verdict.status, GateStatus::Fail);
@@ -945,6 +1141,37 @@ mod tests {
         assert_eq!(monotone_union(&["a"], &["b"]), ["a", "b"]);
     }
 
+    /// Step 4 as a whole, over three manifests: the **key** union as well as
+    /// the per-key value union. A `M_T` that drops a key `A` had, or drops one
+    /// value of a key both had, is not the union — "*the floor never shrinks,
+    /// not even on rollback*".
+    #[test]
+    fn step_4_decides_the_key_union_and_not_only_the_values() {
+        let a = manifest_with_paths(r#""constitution":"CONSTITUTION.md","scaffold":"AGENTS.md""#);
+        let b = manifest_with_paths(r#""constitution":"CONSTITUTION.md""#);
+
+        // `keys(A) ∪ keys(M_B)` = both keys, and `M_T` carries both.
+        let good =
+            manifest_with_paths(r#""constitution":"CONSTITUTION.md","scaffold":"AGENTS.md""#);
+        assert!(paths_are_the_monotone_union(&good, &a, &b));
+
+        // `M_T` drops the key the ancestor had. The old per-key-only reading
+        // never looked at a key `M_T` does not have.
+        assert!(!paths_are_the_monotone_union(&b, &a, &b));
+
+        // `M_T` drops one value of a key both manifests have.
+        let wide = manifest_with_paths(r#""scaffold":["AGENTS.md","CLAUDE.md"]"#);
+        let narrow = manifest_with_paths(r#""scaffold":"AGENTS.md""#);
+        assert!(!paths_are_the_monotone_union(&narrow, &wide, &narrow));
+        assert!(paths_are_the_monotone_union(&wide, &wide, &narrow));
+
+        // And a key `M_T` invents, which neither `A` nor `M_B` had, is not the
+        // union either — the rule is an equality, not a containment.
+        let invented =
+            manifest_with_paths(r#""constitution":"CONSTITUTION.md","extra":"docs/x.md""#);
+        assert!(!paths_are_the_monotone_union(&invented, &b, &b));
+    }
+
     /// MF §6.5: the version check is "what makes `Constitution: v<n>` mean
     /// something", and it is the one coverable constitution finding.
     #[test]
@@ -957,8 +1184,9 @@ mod tests {
             evaluate(&i, &Reviews::default()).statuses()[0].to_string(),
             "constitution-version-regressed"
         );
-        let reviews =
-            Reviews::new(vec![Review::new(ReviewClass::Protected, "SHA256:b").naming(vec!["G16"])]);
+        let reviews = Reviews::new(vec![
+            Review::new(ReviewClass::Protected, "SHA256:b", Binding::Current).naming(vec!["G16"]),
+        ]);
         assert_eq!(evaluate(&i, &reviews).status, GateStatus::Override);
     }
 
@@ -988,7 +1216,7 @@ mod tests {
         assert_eq!(verdict.statuses()[0].to_string(), "keyring-missing");
         assert_eq!(verdict.wires.tokens(), ["G16:.spine/allowed_signers"]);
         let reviews = Reviews::new(vec![
-            Review::new(ReviewClass::Protected, "SHA256:b")
+            Review::new(ReviewClass::Protected, "SHA256:b", Binding::Current)
                 .naming(vec!["G16:.spine/allowed_signers"]),
         ]);
         assert_eq!(evaluate(&i, &reviews).status, GateStatus::Override);
@@ -1012,6 +1240,62 @@ mod tests {
                 .ordered()
                 .iter()
                 .all(|w| w.class == WireClass::Protected && w.kind == WireKind::Finding)
+        );
+    }
+
+    /// GR §6.3 gives G16 a token unconditionally, so an outright finding with
+    /// no wire is a report whose `gates[G16]` fails with nothing in
+    /// `wires` — a `fail` no review could ever name, which is not what G16's
+    /// row says. Nineteen of the twenty statuses were once emitted that way.
+    ///
+    /// Live evaluation reaches only a handful of the statuses at a time
+    /// (several are mutually exclusive: `re-init` skips every M_B comparison,
+    /// `uninstall` skips the ordinary edit rules), so the guard is over the
+    /// module's own source. G14 is the one gate the corpus exempts from a
+    /// wire, and it argues that position in its own file; G16 has no such
+    /// exemption, so the count here is zero and not a list.
+    #[test]
+    fn no_g16_finding_is_raised_without_a_wire() {
+        let source = include_str!("g16.rs");
+        let wireless: Vec<&str> = source
+            .lines()
+            // `coverable` takes its wire as a required argument; only
+            // `outright` has a wireless constructor to fall into. The needle is
+            // assembled rather than written, so that this line does not match
+            // itself — as it did on the first run.
+            .filter(|l| l.contains(&format!("Finding::{}(", "outright")))
+            .collect();
+        assert!(
+            wireless.is_empty(),
+            "every G16 finding must carry a wire; these do not: {wireless:#?}"
+        );
+    }
+
+    /// Check 10's `manifest=` agreement, where absent is not blank: a
+    /// non-uninstall upgrade whose tree has no `.spine/manifest.json` agrees
+    /// with nothing, including an envelope that names nothing.
+    #[test]
+    fn an_upgrade_naming_no_manifest_blob_does_not_agree_with_a_missing_one() {
+        let m = manifest(&["python"], 2, "container");
+        let k = keyring_clean();
+        let mut i = input(&m, Some(&m), &k);
+        i.manifest_blob_changed = true;
+        i.manifest_blob_in_t = None;
+        let upgrade = Upgrade {
+            from: "1.3.0".into(),
+            to: "1.4.0".into(),
+            manifest: String::new(),
+            ..Default::default()
+        };
+        i.upgrade = Some(&upgrade);
+        let verdict = evaluate(&i, &Reviews::default());
+        assert!(
+            verdict
+                .statuses()
+                .iter()
+                .any(|s| s.to_string() == G16Status::UpgradeManifestMismatch.to_string()),
+            "statuses: {:?}",
+            verdict.statuses()
         );
     }
 }

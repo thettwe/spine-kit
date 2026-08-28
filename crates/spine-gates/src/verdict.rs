@@ -215,7 +215,7 @@ pub fn with_break_glass<S>(mut verdict: Verdict<S>, reviews: &Reviews) -> Verdic
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::review::{Review, ReviewClass};
+    use crate::review::{Binding, Review, ReviewClass};
     use crate::wire::{WireClass, WireKind};
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -235,7 +235,8 @@ mod tests {
     #[test]
     fn a_covered_coverable_finding_is_override() {
         let reviews = Reviews::new(vec![
-            Review::new(ReviewClass::Protected, "SHA256:a").naming(vec!["G16:.spine/ci.sh"]),
+            Review::new(ReviewClass::Protected, "SHA256:a", Binding::Current)
+                .naming(vec!["G16:.spine/ci.sh"]),
         ]);
         let verdict = decide(
             Gate::G16,
@@ -254,7 +255,8 @@ mod tests {
     #[test]
     fn naming_an_outright_findings_token_does_not_make_it_override() {
         let reviews = Reviews::new(vec![
-            Review::new(ReviewClass::Protected, "SHA256:a").naming(vec!["G16:.spine/ci.sh"]),
+            Review::new(ReviewClass::Protected, "SHA256:a", Binding::Current)
+                .naming(vec!["G16:.spine/ci.sh"]),
         ]);
         let verdict = decide(
             Gate::G16,
@@ -270,7 +272,8 @@ mod tests {
     #[test]
     fn one_uncovered_coverable_finding_fails_the_whole_gate() {
         let reviews = Reviews::new(vec![
-            Review::new(ReviewClass::Protected, "SHA256:a").naming(vec!["G16:.spine/ci.sh"]),
+            Review::new(ReviewClass::Protected, "SHA256:a", Binding::Current)
+                .naming(vec!["G16:.spine/ci.sh"]),
         ]);
         let verdict = decide(
             Gate::G16,
@@ -287,16 +290,18 @@ mod tests {
     /// or not the gate produced a finding.
     #[test]
     fn break_glass_raises_a_passing_gate_to_override() {
-        let reviews =
-            Reviews::new(vec![Review::new(ReviewClass::BreakGlass, "SHA256:a").naming(vec!["G3"])]);
-        let verdict: Verdict<Token> = with_break_glass(decide(Gate::G3, vec![], &reviews), &reviews);
+        let reviews = Reviews::new(vec![
+            Review::new(ReviewClass::BreakGlass, "SHA256:a", Binding::Current).naming(vec!["G3"]),
+        ]);
+        let verdict: Verdict<Token> =
+            with_break_glass(decide(Gate::G3, vec![], &reviews), &reviews);
         assert_eq!(verdict.status, GateStatus::Override);
     }
 
     #[test]
     fn break_glass_cannot_raise_an_authority_gate() {
         let reviews = Reviews::new(vec![
-            Review::new(ReviewClass::BreakGlass, "SHA256:a").naming(vec!["G14"]),
+            Review::new(ReviewClass::BreakGlass, "SHA256:a", Binding::Current).naming(vec!["G14"]),
         ]);
         let verdict = with_break_glass(
             decide(
@@ -329,12 +334,18 @@ mod tests {
     /// the tripwire lane unreachable and every tripwire landing an escalation.
     #[test]
     fn a_tripwire_wire_is_discharged_by_a_tripwire_review() {
-        let wire = Wire::at(Gate::G2, &b"src/shared/util.ts"[..], WireClass::Tripwire, WireKind::Finding);
+        let wire = Wire::at(
+            Gate::G2,
+            &b"src/shared/util.ts"[..],
+            WireClass::Tripwire,
+            WireKind::Finding,
+        );
         let token = wire.token();
         let findings = vec![Finding::coverable((), wire)];
 
         let tripwire = Reviews::new(vec![
-            Review::new(ReviewClass::Tripwire, "SHA256:bob").naming([token.clone()]),
+            Review::new(ReviewClass::Tripwire, "SHA256:bob", Binding::Current)
+                .naming([token.clone()]),
         ]);
         assert_eq!(
             decide(Gate::G2, findings.clone(), &tripwire).status,
@@ -345,7 +356,8 @@ mod tests {
         // A protected review is the stronger statement and covers it too —
         // PB §5.2's tiers are ordered.
         let protected = Reviews::new(vec![
-            Review::new(ReviewClass::Protected, "SHA256:bob").naming([token.clone()]),
+            Review::new(ReviewClass::Protected, "SHA256:bob", Binding::Current)
+                .naming([token.clone()]),
         ]);
         assert_eq!(
             decide(Gate::G2, findings.clone(), &protected).status,
@@ -364,12 +376,18 @@ mod tests {
     /// for — "a protected review" — so it must not discharge one.
     #[test]
     fn a_tripwire_review_does_not_discharge_a_protected_wire() {
-        let wire = Wire::at(Gate::G14, &b".spine/ci.sh"[..], WireClass::Protected, WireKind::Finding);
+        let wire = Wire::at(
+            Gate::G14,
+            &b".spine/ci.sh"[..],
+            WireClass::Protected,
+            WireKind::Finding,
+        );
         let token = wire.token();
         let findings = vec![Finding::coverable((), wire)];
 
         let tripwire = Reviews::new(vec![
-            Review::new(ReviewClass::Tripwire, "SHA256:bob").naming([token.clone()]),
+            Review::new(ReviewClass::Tripwire, "SHA256:bob", Binding::Current)
+                .naming([token.clone()]),
         ]);
         assert_eq!(
             decide(Gate::G14, findings.clone(), &tripwire).status,
@@ -378,7 +396,7 @@ mod tests {
         );
 
         let protected = Reviews::new(vec![
-            Review::new(ReviewClass::Protected, "SHA256:bob").naming([token]),
+            Review::new(ReviewClass::Protected, "SHA256:bob", Binding::Current).naming([token]),
         ]);
         assert_eq!(
             decide(Gate::G14, findings, &protected).status,

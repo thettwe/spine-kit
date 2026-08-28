@@ -100,14 +100,24 @@ pub fn g2_wire(sub: G2SubCheck, path: Option<&[u8]>, calibration: Calibration) -
 ///
 /// `None` for a binary entry: "binaries **refused** rather than counted", so a
 /// binary in the diff ends the measurement rather than contributing zero.
-pub fn diff_size(numstat: &[(Option<u64>, Option<u64>, Vec<u8>)], exempt: &dyn Fn(&[u8]) -> bool) -> Option<u64> {
+pub fn diff_size(
+    numstat: &[(Option<u64>, Option<u64>, Vec<u8>)],
+    exempt: &dyn Fn(&[u8]) -> bool,
+) -> Option<u64> {
     let mut total: u64 = 0;
     for (added, deleted, path) in numstat {
         if exempt(path) {
             continue;
         }
         // git prints `-` for both columns of a binary entry.
-        total += added.and_then(|a| deleted.map(|d| a + d))?;
+        //
+        // Saturating, not wrapping: a debug build panics on overflow and a
+        // release build wraps to a small number, and the small number is a
+        // count that passes a bound it is astronomically above. `u64::MAX`
+        // lines is not reachable from a real diff, but the two builds
+        // disagreeing about a wire is exactly what PB §6.3 objects to.
+        let entry = added.and_then(|a| deleted.map(|d| a.saturating_add(d)))?;
+        total = total.saturating_add(entry);
     }
     Some(total)
 }
@@ -123,8 +133,29 @@ pub fn diff_size(numstat: &[(Option<u64>, Option<u64>, Vec<u8>)], exempt: &dyn F
 /// caller's input and `None` fires nothing — the fail-**open** direction, taken
 /// deliberately because the fail-closed one would be a threshold no document
 /// states, firing a signed wire two implementations disagree about.
-pub fn diff_size_fires(count: u64, bound: Option<u64>) -> bool {
-    bound.is_some_and(|max| count > max)
+///
+/// The bound is therefore a named lane and not an `Option`. `None` read as
+/// "no bound" is the same value as `None` read as "the caller forgot", and on
+/// the quick lane — where PB §6.3 does fix the bound at `C-Q2` — forgetting is
+/// the only way to get one: CN §7.1's `effective` supplies a value for every
+/// rule, always, so a quick-lane caller always has a number to pass.
+pub fn diff_size_fires(count: u64, bound: DiffSizeBound) -> bool {
+    match bound {
+        DiffSizeBound::Quick(max) => count > max,
+        DiffSizeBound::GatedUnbounded => false,
+    }
+}
+
+/// Which bound the diff-size sub-check is measured against, per lane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiffSizeBound {
+    /// The quick lane's `C-Q2` (`quick.max_lines`). Fires strictly above it —
+    /// a diff exactly at the bound is under it.
+    Quick(u64),
+    /// A gated lane. The corpus fixes no bound there (C6), so nothing fires,
+    /// and this spelling makes that a decision the caller states rather than
+    /// one it falls into.
+    GatedUnbounded,
 }
 
 // ---------------------------------------------------------------------------
@@ -326,9 +357,9 @@ mod tests {
     /// Contradiction C6: "an implementer must not invent a gated-lane bound."
     #[test]
     fn no_bound_fires_no_diff_size_wire() {
-        assert!(!diff_size_fires(100_000, None));
-        assert!(diff_size_fires(401, Some(400)));
-        assert!(!diff_size_fires(400, Some(400)));
+        assert!(!diff_size_fires(100_000, DiffSizeBound::GatedUnbounded));
+        assert!(diff_size_fires(401, DiffSizeBound::Quick(400)));
+        assert!(!diff_size_fires(400, DiffSizeBound::Quick(400)));
     }
 
     /// GR §9.8: "exactly **1 209 600 seconds** (14 days)".

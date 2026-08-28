@@ -7,6 +7,7 @@
 
 use spine_gates::automerge::{self, Observations};
 use spine_gates::g14::{DiffEntry, G14Input};
+use spine_gates::review::Binding;
 use spine_gates::tripwires::{Calibration, G2SubCheck, g2_wire};
 use spine_gates::{
     Gate, GateStatus, LandingShape, Review, ReviewClass, ReviewState, Reviews, Wire, WireClass,
@@ -37,7 +38,7 @@ fn the_flagship_landings_wire_set_is_the_canonical_line() {
     assert_eq!(review_state(&wires), ReviewState::LandingReview);
 
     let bob = Reviews::new(vec![
-        Review::new(ReviewClass::Tripwire, "SHA256:bob").naming(wires.tokens()),
+        Review::new(ReviewClass::Tripwire, "SHA256:bob", Binding::Current).naming(wires.tokens()),
     ]);
     assert!(bob.contain(&wires));
 }
@@ -67,12 +68,13 @@ fn a_floor_hit_promotes_the_state_and_the_review_must_still_cover_the_advisory()
     assert_eq!(review_state(&wires), ReviewState::ProtectedReview);
 
     let floor_only = Reviews::new(vec![
-        Review::new(ReviewClass::Protected, "SHA256:a").naming(vec!["G14:.spine/ci.sh"]),
+        Review::new(ReviewClass::Protected, "SHA256:a", Binding::Current)
+            .naming(vec!["G14:.spine/ci.sh"]),
     ]);
     assert!(!floor_only.contain(&wires));
 
     let complete = Reviews::new(vec![
-        Review::new(ReviewClass::Protected, "SHA256:a")
+        Review::new(ReviewClass::Protected, "SHA256:a", Binding::Current)
             .naming(vec!["G11", "G14:.spine/ci.sh"]),
     ]);
     assert!(complete.contain(&wires));
@@ -112,9 +114,9 @@ fn a_break_glass_review_sits_beside_the_protected_one_and_never_replaces_it() {
     ));
 
     let reviews = Reviews::new(vec![
-        Review::new(ReviewClass::Protected, "SHA256:a").naming(wires.tokens()),
-        Review::new(ReviewClass::Protected, "SHA256:b").naming(wires.tokens()),
-        Review::new(ReviewClass::BreakGlass, "SHA256:a").naming(vec!["G1"]),
+        Review::new(ReviewClass::Protected, "SHA256:a", Binding::Current).naming(wires.tokens()),
+        Review::new(ReviewClass::Protected, "SHA256:b", Binding::Current).naming(wires.tokens()),
+        Review::new(ReviewClass::BreakGlass, "SHA256:a", Binding::Current).naming(vec!["G1"]),
     ]);
 
     // One state, and it is the protected one.
@@ -189,7 +191,9 @@ fn each_landing_shape_selects_its_own_gate_set() {
     );
     // The quick lane and a reseal drop G3, G4 and G12 — "a subjectless landing
     // has neither [an in-flight intent nor an approval]".
-    let quick = ["G1", "G2", "G5", "G7", "G8", "G9", "G11", "G13", "G14", "G15", "G16"];
+    let quick = [
+        "G1", "G2", "G5", "G7", "G8", "G9", "G11", "G13", "G14", "G15", "G16",
+    ];
     assert_eq!(ran(LandingShape::Quick), quick);
     assert_eq!(ran(LandingShape::Reseal), quick);
 }
