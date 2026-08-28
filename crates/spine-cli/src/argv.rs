@@ -16,6 +16,11 @@
 //!            [--merge] [--adopt <path|file#region>] [--force <path>] [--abort]
 //!            [--rollback [<sha>]] [--uninstall]
 //!
+//! spine new [--change|--bug] [--from <quick-branch>]
+//! spine new --sign <id> [--override-lease "<reason>"]
+//! spine new --reopen <id> --reason "…"
+//! spine new --withdraw <id> --reason "…" [--protected]
+//!
 //! spine check [--ci] [--collect] [--constitution] [--authority]
 //!             [--approve <id>] [--review [<id> | --quick <branch> | --reseal]]
 //!             [--land [<id> | --quick <branch> | --reseal] [--print] [--dry-run]]
@@ -33,7 +38,7 @@ use core::fmt;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
     Init(Box<Init>),
-    New,
+    New(Box<New>),
     Index { fresh: bool, dump: bool },
     Check(Box<Check>),
 }
@@ -69,6 +74,67 @@ pub struct Check {
     pub verify: Option<String>,
     pub break_glass: Option<String>,
     pub pre_receive: bool,
+}
+
+/// PB §11's four forms of `spine new`, which are **four commands sharing a
+/// name** and not one command with optional flags.
+///
+/// The creation form runs the interview and emits a scaffold; the other three
+/// are signed transitions on an intent that already exists. Modelling them as
+/// one flag bag would admit `spine new --change --withdraw INT-042`, which is a
+/// request to create and destroy in one run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum New {
+    /// `spine new [--change|--bug] [--from <quick-branch>]` — "runs the
+    /// interview (§3.4) on a fresh `intent/<ID>` branch and emits the filled
+    /// template, stamped with the manifest's template version".
+    Create {
+        variant: Variant,
+        /// "`--from <branch>` promotes an escalated quick-lane branch."
+        from: Option<String>,
+    },
+    /// `--sign <id> [--override-lease "<reason>"]` — "performs the one human
+    /// gate (§3.4)".
+    Sign {
+        id: String,
+        /// PB §5.4's third way out of a hard lease collision, "recorded as
+        /// `lease_override=` on the sign-off line — the lease still trips at
+        /// landing".
+        override_lease: Option<String>,
+    },
+    /// `--reopen <id> --reason "…"` — "the only way to change a frozen byte".
+    ///
+    /// The reason is **required**: PB §3.4's signature has no bare form, and a
+    /// reopen with no reason is a signed transition whose record says nothing
+    /// about why the intent was wrong.
+    Reopen { id: String, reason: String },
+    /// `--withdraw <id> --reason "…" [--protected]` — the exit that lands a
+    /// tombstone.
+    Withdraw {
+        id: String,
+        reason: String,
+        protected: bool,
+    },
+}
+
+/// PB §3.5's three intent variants, which are three templates.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Variant {
+    #[default]
+    Intent,
+    Change,
+    Bug,
+}
+
+impl Variant {
+    /// The template name MF §3.6 spells, and `templates[<name>]` keys.
+    pub fn template_name(self) -> &'static str {
+        match self {
+            Variant::Intent => "intent",
+            Variant::Change => "intent-change",
+            Variant::Bug => "intent-bug",
+        }
+    }
 }
 
 /// The subject of a `--land` or `--review`.
@@ -190,7 +256,7 @@ pub fn parse(args: &[String]) -> Result<Command, ArgError> {
 
     match command.as_str() {
         "init" => parse_init(&rest).map(|init| Command::Init(Box::new(init))),
-        "new" => Ok(Command::New),
+        "new" => parse_new(&rest).map(|new| Command::New(Box::new(new))),
         "index" => {
             let mut fresh = false;
             let mut dump = false;
@@ -306,6 +372,162 @@ fn parse_init(args: &[&String]) -> Result<Init, ArgError> {
         index += 1;
     }
     Ok(init)
+}
+
+/// PB §11's `spine new`, whose four forms are mutually exclusive.
+///
+/// The exclusivity is the parse's job and not a later check, because the four
+/// do different things to the repository: three of them sign, one of them
+/// creates a branch, and a run that could be read as two of them at once has
+/// no safe interpretation to fall back on.
+fn parse_new(args: &[&String]) -> Result<New, ArgError> {
+    let mut variant: Option<Variant> = None;
+    let mut from: Option<String> = None;
+    let mut mode: Option<(&'static str, String)> = None;
+    let mut reason: Option<String> = None;
+    let mut override_lease: Option<String> = None;
+    let mut protected = false;
+
+    let mut index = 0;
+    while index < args.len() {
+        let arg = args[index].as_str();
+        let mut next = |flag: &str| -> Result<String, ArgError> {
+            index += 1;
+            args.get(index)
+                .map(|v| v.to_string())
+                .ok_or_else(|| ArgError::MissingValue(flag.to_string()))
+        };
+
+        // The three signed forms each take an id, and naming two of them is a
+        // request with no safe reading.
+        let claim = |mode: &mut Option<(&'static str, String)>,
+                     name: &'static str,
+                     id: String|
+         -> Result<(), ArgError> {
+            match mode {
+                Some((first, _)) => Err(ArgError::UnknownFlag {
+                    command: "new",
+                    flag: format!("{name} with {first}"),
+                }),
+                None => {
+                    *mode = Some((name, id));
+                    Ok(())
+                }
+            }
+        };
+
+        match arg {
+            "--change" | "--bug" => {
+                let want = if arg == "--change" {
+                    Variant::Change
+                } else {
+                    Variant::Bug
+                };
+                // PB §3.5's variants are three templates, and an intent is one
+                // of them. Asking for two is asking for two documents.
+                if variant.is_some_and(|already| already != want) {
+                    return Err(ArgError::UnknownFlag {
+                        command: "new",
+                        flag: "--change with --bug".into(),
+                    });
+                }
+                variant = Some(want);
+            }
+            "--from" => from = Some(next("--from")?),
+            "--protected" => protected = true,
+            "--reason" => reason = Some(next("--reason")?),
+            "--override-lease" => override_lease = Some(next("--override-lease")?),
+            "--sign" => {
+                let id = next("--sign")?;
+                claim(&mut mode, "--sign", id)?;
+            }
+            "--reopen" => {
+                let id = next("--reopen")?;
+                claim(&mut mode, "--reopen", id)?;
+            }
+            "--withdraw" => {
+                let id = next("--withdraw")?;
+                claim(&mut mode, "--withdraw", id)?;
+            }
+            other => {
+                return Err(ArgError::UnknownFlag {
+                    command: "new",
+                    flag: other.to_string(),
+                });
+            }
+        }
+        index += 1;
+    }
+
+    // Which flags belong to which form. Stated as refusals rather than as
+    // silent ignores: `--protected` on a `--sign` is a request for something
+    // `--sign` does not have, and honouring the rest of the run would be
+    // acting on a command the operator did not write.
+    let reject = |flag: &'static str, form: &'static str| ArgError::UnknownFlag {
+        command: "new",
+        flag: format!("{flag} does not belong to {form}"),
+    };
+
+    match mode {
+        None => {
+            if let Some(unused) = override_lease.as_ref().map(|_| "--override-lease") {
+                return Err(reject(unused, "the creation form"));
+            }
+            if reason.is_some() {
+                return Err(reject("--reason", "the creation form"));
+            }
+            if protected {
+                return Err(reject("--protected", "the creation form"));
+            }
+            Ok(New::Create {
+                variant: variant.unwrap_or_default(),
+                from,
+            })
+        }
+        Some((name, id)) => {
+            if variant.is_some() {
+                return Err(reject("--change/--bug", name));
+            }
+            if from.is_some() {
+                return Err(reject("--from", name));
+            }
+            match name {
+                "--sign" => {
+                    if reason.is_some() {
+                        return Err(reject("--reason", "--sign"));
+                    }
+                    if protected {
+                        return Err(reject("--protected", "--sign"));
+                    }
+                    Ok(New::Sign { id, override_lease })
+                }
+                "--reopen" => {
+                    if override_lease.is_some() {
+                        return Err(reject("--override-lease", "--reopen"));
+                    }
+                    if protected {
+                        return Err(reject("--protected", "--reopen"));
+                    }
+                    // PB §3.4's signature has no bare form: a signed
+                    // transition whose record says nothing about why is a
+                    // record that does not do its job.
+                    let reason = reason.ok_or(ArgError::MissingValue("--reason".into()))?;
+                    Ok(New::Reopen { id, reason })
+                }
+                _ => {
+                    if override_lease.is_some() {
+                        return Err(reject("--override-lease", "--withdraw"));
+                    }
+                    let reason = reason.ok_or(ArgError::MissingValue("--reason".into()))?;
+                    Ok(New::Withdraw {
+                        id,
+                        reason,
+                        protected,
+                    })
+                }
+            }
+        }
+    }
 }
 
 /// PB §11's `spine check`.
@@ -474,7 +696,7 @@ mod tests {
     #[test]
     fn the_four_commands_and_nothing_else() {
         assert!(matches!(parse(&argv(&["init"])), Ok(Command::Init(_))));
-        assert!(matches!(parse(&argv(&["new"])), Ok(Command::New)));
+        assert!(matches!(parse(&argv(&["new"])), Ok(Command::New(_))));
         assert!(matches!(
             parse(&argv(&["index"])),
             Ok(Command::Index { .. })
@@ -491,6 +713,173 @@ mod tests {
             ));
         }
         assert_eq!(parse(&[]), Err(ArgError::NoCommand));
+    }
+
+    fn new(words: &[&str]) -> Result<New, ArgError> {
+        let mut all = vec!["new"];
+        all.extend_from_slice(words);
+        match parse(&argv(&all)) {
+            Ok(Command::New(n)) => Ok(*n),
+            Ok(other) => panic!("parsed as {other:?}"),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// PB §11's four forms, each recognised as itself.
+    #[test]
+    fn the_four_forms_of_spine_new() {
+        assert_eq!(
+            new(&[]).unwrap(),
+            New::Create {
+                variant: Variant::Intent,
+                from: None
+            }
+        );
+        assert_eq!(
+            new(&["--bug"]).unwrap(),
+            New::Create {
+                variant: Variant::Bug,
+                from: None
+            }
+        );
+        assert_eq!(
+            new(&["--change", "--from", "quick/typo"]).unwrap(),
+            New::Create {
+                variant: Variant::Change,
+                from: Some("quick/typo".into())
+            }
+        );
+        assert_eq!(
+            new(&["--sign", "INT-042"]).unwrap(),
+            New::Sign {
+                id: "INT-042".into(),
+                override_lease: None
+            }
+        );
+        assert_eq!(
+            new(&["--reopen", "INT-042", "--reason", "AC-3 was untestable"]).unwrap(),
+            New::Reopen {
+                id: "INT-042".into(),
+                reason: "AC-3 was untestable".into()
+            }
+        );
+        assert_eq!(
+            new(&[
+                "--withdraw",
+                "INT-042",
+                "--reason",
+                "superseded",
+                "--protected"
+            ])
+            .unwrap(),
+            New::Withdraw {
+                id: "INT-042".into(),
+                reason: "superseded".into(),
+                protected: true
+            }
+        );
+    }
+
+    /// The four forms are four commands sharing a name. Two of them at once is
+    /// a request to create and destroy in one run, and there is no safe reading
+    /// to fall back on.
+    #[test]
+    fn two_forms_at_once_are_refused() {
+        assert!(matches!(
+            new(&[
+                "--sign",
+                "INT-042",
+                "--withdraw",
+                "INT-043",
+                "--reason",
+                "x"
+            ]),
+            Err(ArgError::UnknownFlag { .. })
+        ));
+        assert!(matches!(
+            new(&["--change", "--sign", "INT-042"]),
+            Err(ArgError::UnknownFlag { .. })
+        ));
+        // PB §3.5's variants are three templates; asking for two is asking for
+        // two documents.
+        assert!(matches!(
+            new(&["--change", "--bug"]),
+            Err(ArgError::UnknownFlag { .. })
+        ));
+        // The same flag twice is not two forms.
+        assert!(new(&["--bug", "--bug"]).is_ok());
+    }
+
+    /// A flag that belongs to another form is refused rather than ignored:
+    /// honouring the rest of the run would act on a command nobody wrote.
+    #[test]
+    fn a_flag_from_another_form_is_refused() {
+        for words in [
+            vec!["--protected"],
+            vec!["--reason", "why"],
+            vec!["--override-lease", "why"],
+            vec!["--sign", "INT-042", "--protected"],
+            vec!["--sign", "INT-042", "--reason", "why"],
+            vec![
+                "--reopen",
+                "INT-042",
+                "--reason",
+                "why",
+                "--override-lease",
+                "x",
+            ],
+            vec![
+                "--withdraw",
+                "INT-042",
+                "--reason",
+                "why",
+                "--override-lease",
+                "x",
+            ],
+            vec![
+                "--reopen", "INT-042", "--reason", "why", "--from", "quick/x",
+            ],
+        ] {
+            assert!(
+                matches!(new(&words), Err(ArgError::UnknownFlag { .. })),
+                "{words:?} was accepted"
+            );
+        }
+    }
+
+    /// PB §3.4's signatures have no bare `--reopen` and no bare `--withdraw`:
+    /// a signed transition whose record says nothing about why is a record
+    /// that does not do its job. `--sign`'s `--override-lease` really is
+    /// optional, and PB §5.4 is why — it is the third way out of a lease
+    /// collision, not a condition of signing.
+    #[test]
+    fn reopen_and_withdraw_require_a_reason_and_sign_does_not() {
+        assert!(matches!(
+            new(&["--reopen", "INT-042"]),
+            Err(ArgError::MissingValue(_))
+        ));
+        assert!(matches!(
+            new(&["--withdraw", "INT-042"]),
+            Err(ArgError::MissingValue(_))
+        ));
+        assert_eq!(
+            new(&["--sign", "INT-042", "--override-lease", "narrowed"]).unwrap(),
+            New::Sign {
+                id: "INT-042".into(),
+                override_lease: Some("narrowed".into())
+            }
+        );
+    }
+
+    /// Every value flag refuses rather than taking an empty string.
+    #[test]
+    fn a_new_value_flag_needs_its_value() {
+        for flag in ["--from", "--sign", "--reopen", "--withdraw", "--reason"] {
+            assert!(
+                matches!(new(&[flag]), Err(ArgError::MissingValue(_))),
+                "{flag} accepted no value"
+            );
+        }
     }
 
     fn check(words: &[&str]) -> Result<Check, ArgError> {

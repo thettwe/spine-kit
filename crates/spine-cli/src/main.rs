@@ -9,6 +9,7 @@ mod argv;
 mod check;
 mod index;
 mod init;
+mod new;
 
 use std::process::ExitCode;
 
@@ -48,10 +49,7 @@ fn main() -> ExitCode {
                 ExitCode::from(exit::ERROR)
             }
         },
-        argv::Command::New => {
-            eprintln!("spine new: not yet implemented");
-            ExitCode::from(exit::ERROR)
-        }
+        argv::Command::New(options) => new::run(options.as_ref()),
         argv::Command::Index { fresh, dump } => index::run(fresh, dump),
         argv::Command::Check(options) => check::run(options.as_ref()),
     }
