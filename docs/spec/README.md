@@ -148,3 +148,30 @@ harmless and keeps the flag from being a second place the rule is stated.
 
 Found by building `--approve` and discovering the value had no source.
 
+## Owner ruling, 2026-08-30 — vitest's terminal session-end event is `onTestRunEnd`
+
+`import-resolver.md` §11.6 item 8 now names all four, closing the residual left
+by the 2026-08-28 ruling on question 8.
+
+**Measured, not read.** vitest 4.1.11 under Node 26, with a probe reporter
+logging every lifecycle hook:
+
+| Run | Hooks, tail | `onTestRunEnd` |
+|---|---|---|
+| completed | `… onTestModuleEnd, onTaskUpdate, onTestRunEnd` | **yes** |
+| killed mid-run (`SIGKILL`) | `… onTestCaseReady, onTaskUpdate` | **no** |
+| red suite (exit 1) | ends `onTestRunEnd` | **yes** |
+| module fails to import (exit 1) | ends `onTestRunEnd` | **yes** |
+
+The first two rows are the discrimination `result-file.md` §7.3 needs. The last
+two are required rather than incidental: §7.3 says "The runner's *exit code* is
+never the discriminator — a red suite exits non-zero on every runner that ships,
+so an exit-code test would make `complete` unreachable for exactly the runs G1
+exists to judge", and both of those runs exit non-zero while still being
+complete.
+
+**One implementation fact was found the same way** and is recorded because it
+would otherwise be found at startup: a vitest reporter is a **class**, and an
+object export is rejected with `TypeError: (intermediate value) is not a
+constructor`.
+

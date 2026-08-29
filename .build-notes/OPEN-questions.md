@@ -17,12 +17,12 @@ implementation does in the meantime.
 > | 5 | `--from` cherry-picks `merge-base..<branch>` | PB §11 · `spine-cli` |
 > | 6 | P4(a) is netlink; the `sysfs` parenthetical is struck | RF §7.1 · code already conformed |
 > | 7 | §11.6 renumbered 1–8 | IR §11.6 |
-> | 8 | `pytest_sessionfinish` is pytest's terminal event; **vitest's is owed by the owner and not yet supplied** | IR §11.6 · `spine-runner` |
+> | 8 | `pytest_sessionfinish` is pytest's terminal event, `onTestRunEnd` is vitest's — **both closed, both measured** (2026-08-30) | IR §11.6 · `spine-runner` |
 > | 9 | The collector takes the syntactic reading of a reseal's `base=` | RF §4.2 · code already conformed |
 >
-> **One thing is still open and is not in the table:** `vitest`'s terminal
-> session-end event. IR §11.3 owes it before that adapter ships, and until then
-> `complete` has no definition for a TypeScript suite.
+> **Nothing is left open.** `vitest`'s terminal session-end event — the last
+> residual — was measured and ruled on 2026-08-30: `onTestRunEnd`. All four
+> adapters now name one, so `complete` is defined for every v1 language.
 
 ## 1 · Does the Dart declarative subset admit YAML's own quote escapes?
 
