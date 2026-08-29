@@ -6,13 +6,16 @@
 //! a refusal leaves the repository exactly as it was.
 
 mod allocate;
+mod approve;
 mod argv;
 mod check;
 mod collect;
+mod g12;
 mod index;
 mod init;
 mod new;
 mod sign;
+mod tree_source;
 mod tty;
 
 use std::process::ExitCode;

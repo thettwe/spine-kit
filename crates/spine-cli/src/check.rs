@@ -51,8 +51,8 @@ pub fn run(check: &Check) -> ExitCode {
         "--constitution"
     } else if check.collect {
         return crate::collect::run(check);
-    } else if check.approve.is_some() {
-        "--approve"
+    } else if let Some(id) = &check.approve {
+        return crate::approve::run(id);
     } else if check.review.is_some() {
         "--review"
     } else if let Some(subject) = &check.land {

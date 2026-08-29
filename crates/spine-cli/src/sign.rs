@@ -151,9 +151,16 @@ fn inner(id: &str, override_lease: Option<&str>) -> Result<u8, Box<dyn std::erro
 /// already at HEAD. A reopen is not: PB §4.3 says "the commit that changes the
 /// intent blob carries a signed `Spine-Reopen` line", and "A reopen must change
 /// the blob — a no-op reopen is refused."
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Commit {
     Empty,
+    /// Empty, with further trailer lines beneath the signed statement.
+    ///
+    /// PB §4.3's approval record is one signed `Spine-Approve` line plus the
+    /// `Spine-Frozen` and `Spine-Test` lines it covers by `freeze=` — those are
+    /// not separately signed, and are inside the envelope by being in the
+    /// message.
+    EmptyWith(Vec<Vec<u8>>),
     /// The worktree's changes, staged and committed with the statement.
     WithWorktree,
 }
@@ -181,8 +188,15 @@ pub fn write_statement(
     message.push(b'\n');
     message.extend_from_slice(&sig_line(name, &signature));
 
+    if let Commit::EmptyWith(extra) = &commit {
+        for line in extra {
+            message.extend_from_slice(line);
+            message.push(b'\n');
+        }
+    }
+
     let sha = match commit {
-        Commit::Empty => repo.commit_empty(&message)?,
+        Commit::Empty | Commit::EmptyWith(_) => repo.commit_empty(&message)?,
         Commit::WithWorktree => repo.commit_worktree(&message)?,
     };
     println!("{sha}");
@@ -372,7 +386,7 @@ fn trunk_resign_floor(
 /// picked by a heuristic is a signature under an identity the operator did not
 /// choose, and MF §4.5 grants namespaces per principal — the wrong key is a
 /// refusal at G13 rather than a mistake anyone sees here.
-fn signing_key(repo: &Repo) -> Result<PathBuf, Box<dyn std::error::Error>> {
+pub fn signing_key(repo: &Repo) -> Result<PathBuf, Box<dyn std::error::Error>> {
     if let Some(path) = std::env::var_os("SPINE_SIGNING_KEY") {
         let path = PathBuf::from(path);
         if path.exists() {
