@@ -20,8 +20,8 @@ use spine_resolve::glob::Pattern;
 use crate::exit;
 use crate::sign::{Commit, signing_key, write_statement};
 
-pub fn run(id: &str) -> ExitCode {
-    match inner(id) {
+pub fn run(id: &str, reason: Option<&str>) -> ExitCode {
+    match inner(id, reason) {
         Ok(code) => ExitCode::from(code),
         Err(e) => {
             eprintln!("spine check --approve: {e}");
@@ -30,7 +30,7 @@ pub fn run(id: &str) -> ExitCode {
     }
 }
 
-fn inner(id: &str) -> Result<u8, Box<dyn std::error::Error>> {
+fn inner(id: &str, reason: Option<&str>) -> Result<u8, Box<dyn std::error::Error>> {
     let cwd = std::env::current_dir()?;
     let repo = Repo::discover(&cwd)?;
     let doc = format!("intents/{id}.md");
@@ -122,23 +122,29 @@ fn inner(id: &str) -> Result<u8, Box<dyn std::error::Error>> {
     }
 
     // PB §11: "`reason=` is mandatory, and G13 refuses its absence, on
-    // `red=0/n`, `held=false`, or a closure tripwire." PB §11's signature gives
-    // `--approve` no `--reason`, so each of those is a refusal here rather than
-    // a reason invented on the operator's behalf. Filed as open question 10.
+    // `red=0/n`, `held=false`, or a closure tripwire." `--reason` was added to
+    // the signature on 2026-08-30 for exactly these; refusing without one here
+    // is the cheap place to learn, since G13 would refuse the landing anyway.
+    //
+    // `held=false` is the third condition and v1 cannot reach it: it "marks B
+    // still breaking at the cap", and there is no A↔B loop until orchestration
+    // ships (PB §4.3, roadmap 5). So two conditions are checked and the third
+    // is named rather than silently absent.
+    let mut needs_reason: Vec<&str> = Vec::new();
     if measured.red == 0 {
-        eprintln!(
-            "spine check --approve: red=0/{} — no frozen test failed against the base-restored \
-             tree, which G12 makes a wire a human must sign with a `reason=` (PB §6.3). \
-             PB §11's signature gives `--approve` no `--reason`, so this refuses rather than \
-             invent one: see .build-notes/OPEN-questions.md #10.",
-            measured.total
-        );
-        return Ok(exit::REFUSED);
+        needs_reason.push("red=0/n — no frozen test failed against the base-restored tree");
     }
     if !frozen.unresolvable.is_empty() {
+        needs_reason.push("a closure tripwire — a frozen test's import did not resolve");
+    }
+    if !needs_reason.is_empty() && reason.is_none() {
+        eprintln!("spine check --approve: this approval needs a `--reason \"…\"`:");
+        for why in &needs_reason {
+            eprintln!("spine check --approve:   {why}");
+        }
         eprintln!(
-            "spine check --approve: a closure tripwire also needs a `reason=`, which \
-             `--approve` has no flag for (open question 10)"
+            "spine check --approve: G13 refuses a `Spine-Approve` without `reason=` in these \
+             cases (PB §11), and it is a human's judgement rather than this command's."
         );
         return Ok(exit::REFUSED);
     }
@@ -180,11 +186,18 @@ fn inner(id: &str) -> Result<u8, Box<dyn std::error::Error>> {
     let signer = repo.config("user.email").ok_or("git has no `user.email`")?;
     let key = signing_key(&repo)?;
 
-    let payload = format!(
+    let mut payload = format!(
         "{id} intent={intent_blob} base={base} rounds={rounds} total_rounds={total_rounds} \
-         reopens={reopens} red={}/{} freeze={freeze} signer={signer}",
+         reopens={reopens} red={}/{} freeze={freeze}",
         measured.red, measured.total
     );
+    // PB §11's field order puts `reason=` after `freeze=` and before
+    // `signer=`, and `signer=` is always last. "`reason=` values are JSON
+    // string literals" (PB §7.2).
+    if let Some(reason) = reason {
+        payload.push_str(&format!(" reason={}", crate::sign::json_string(reason)));
+    }
+    payload.push_str(&format!(" signer={signer}"));
 
     write_statement(
         &repo,

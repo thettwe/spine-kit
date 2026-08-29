@@ -124,3 +124,27 @@ off `call` answered `unknown` for every skipped test in every repository. That
 is the same lesson `result-file.md` §13 R36 records: a claim about what a
 runtime does is unverified until something runs it.
 
+## Owner ruling, 2026-08-30 — `--approve` gains `--reason`
+
+`PLAYBOOK.md` §11's `spine check` signature now reads
+`[--approve <id> [--reason "…"]]`.
+
+**Why.** `reason=` is mandatory on `Spine-Approve` in three cases G13 refuses
+without — `red=0/n` (PB §6.3's G12 row: *"`k = 0` is a wire at approval (a human
+signs with a reason)"*), `held=false`, and a closure tripwire (PB §4.3: *"Signing
+past the tripwire instead is permitted and records `reason=` (mandatory; G13
+refuses its absence)"*). All three are reachable on an ordinary approval, and
+the signature gave `--approve` no way to supply one. Every other statement that
+records a reason already had a flag: `spine new --reopen … --reason`,
+`--withdraw … --reason`, `spine check --break-glass "<reason>"`.
+
+**What it fixes.** PB §11's state table has *approval-review → tests-approved*,
+"human signs the approval with a reason". Before this there was no invocation
+that could perform that transition.
+
+**The implementation requires it exactly where G13 does** and refuses without
+it; supplied when no condition holds it is carried and G13 ignores it, which is
+harmless and keeps the flag from being a second place the rule is stated.
+
+Found by building `--approve` and discovering the value had no source.
+

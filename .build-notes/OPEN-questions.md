@@ -17,7 +17,7 @@ implementation does in the meantime.
 > | 5 | `--from` cherry-picks `merge-base..<branch>` | PB §11 · `spine-cli` |
 > | 6 | P4(a) is netlink; the `sysfs` parenthetical is struck | RF §7.1 · code already conformed |
 > | 7 | §11.6 renumbered 1–8 | IR §11.6 |
-> | 8 | `pytest_sessionfinish` is pytest's terminal event; vitest's is still owed | IR §11.6 · `spine-runner` |
+> | 8 | `pytest_sessionfinish` is pytest's terminal event; **vitest's is owed by the owner and not yet supplied** | IR §11.6 · `spine-runner` |
 > | 9 | The collector takes the syntactic reading of a reseal's `base=` | RF §4.2 · code already conformed |
 >
 > **One thing is still open and is not in the table:** `vitest`'s terminal
@@ -253,6 +253,7 @@ invocation contract (CI §5.1, digest-pinned) does not currently do — and whic
 would also close the `T`-computed-twice skew this document's neighbours note.
 
 ## 10 · `--approve` must record a `reason=` and PB §11's signature gives it no flag
+### RULED 2026-08-30: `--reason` added to the signature. `docs/spec/README.md` has the record.
 
 **Where.** PB §6.3's G12 row: *"`k = 0` is a wire at **approval** (a human
 signs with a reason)"*. PB §11's `Spine-Approve` payload: *"`reason=` is

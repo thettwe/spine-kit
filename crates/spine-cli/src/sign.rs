@@ -341,7 +341,7 @@ fn withdraw_inner(
 }
 
 /// PB §7.2's `reason=` values "are JSON string literals".
-fn json_string(value: &str) -> String {
+pub fn json_string(value: &str) -> String {
     let mut out = String::with_capacity(value.len() + 2);
     out.push('"');
     for c in value.chars() {

@@ -263,11 +263,11 @@ fn an_approval_freezes_the_closure_and_measures_red_against_base() {
 }
 
 /// PB §6.3: "`k = 0` is a wire at **approval** (a human signs with a reason)",
-/// and PB §11 makes `reason=` mandatory there — while giving `--approve` no
-/// `--reason` flag. Until that is settled (open question 10) this refuses
-/// rather than inventing one, and says so.
+/// and PB §11 makes `reason=` mandatory there. The flag was added to the
+/// signature on 2026-08-30; without it the approval refuses, and with it the
+/// reason reaches the line as a JSON string literal (PB §7.2).
 #[test]
-fn a_green_measurement_refuses_rather_than_inventing_a_reason() {
+fn a_green_measurement_needs_a_reason_and_records_it() {
     let Some(repo) = Repo::new("green") else {
         return;
     };
@@ -287,7 +287,49 @@ fn a_green_measurement_refuses_rather_than_inventing_a_reason() {
     let (code, out) = repo.sign(&["check", "--approve", "INT-001"]);
     assert_eq!(code, 2, "{out}");
     assert!(out.contains("red=0/"), "{out}");
+    assert!(out.contains("--reason"), "{out}");
     assert!(!repo.message().contains("Spine-Approve:"));
+
+    // With one, it lands — and the reason is on the line G13 reads.
+    let (code, out) = repo.sign(&[
+        "check",
+        "--approve",
+        "INT-001",
+        "--reason",
+        "the suite already covered this on trunk",
+    ]);
+    assert_eq!(code, 0, "{out}");
+    let message = repo.message();
+    let line = message
+        .lines()
+        .find(|l| l.starts_with("Spine-Approve: "))
+        .expect("a Spine-Approve line");
+    assert!(line.contains("red=0/2"), "{line}");
+    assert!(
+        line.contains(r#"reason="the suite already covered this on trunk""#),
+        "{line}"
+    );
+    // PB §11's field order: `reason=` before `signer=`, and `signer=` last.
+    assert!(line.ends_with("signer=alice@example.com"), "{line}");
+}
+
+/// The flag is optional, and an approval that needs no reason does not carry
+/// one: G13 requires it in three cases and ignores it otherwise, so a line that
+/// always had one would say nothing.
+#[test]
+fn a_red_approval_carries_no_reason_unless_given() {
+    let Some(repo) = Repo::new("no-reason") else {
+        return;
+    };
+    assert_eq!(repo.sign(&["new", "--sign", "INT-001"]).0, 0);
+    let (code, out) = repo.sign(&["check", "--approve", "INT-001"]);
+    assert_eq!(code, 0, "{out}");
+    let message = repo.message();
+    let line = message
+        .lines()
+        .find(|l| l.starts_with("Spine-Approve: "))
+        .unwrap();
+    assert!(!line.contains("reason="), "{line}");
 }
 
 /// "which refuses a dirty worktree" — the approval freezes the branch HEAD's

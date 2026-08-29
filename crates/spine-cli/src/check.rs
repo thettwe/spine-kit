@@ -52,7 +52,7 @@ pub fn run(check: &Check) -> ExitCode {
     } else if check.collect {
         return crate::collect::run(check);
     } else if let Some(id) = &check.approve {
-        return crate::approve::run(id);
+        return crate::approve::run(id, check.reason.as_deref());
     } else if check.review.is_some() {
         "--review"
     } else if let Some(subject) = &check.land {

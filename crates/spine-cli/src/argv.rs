@@ -22,7 +22,8 @@
 //! spine new --withdraw <id> --reason "…" [--protected]
 //!
 //! spine check [--ci] [--collect] [--constitution] [--authority]
-//!             [--approve <id>] [--review [<id> | --quick <branch> | --reseal]]
+//!             [--approve <id> [--reason "…"]]
+//!             [--review [<id> | --quick <branch> | --reseal]]
 //!             [--land [<id> | --quick <branch> | --reseal] [--print] [--dry-run]]
 //!             [--report <path>] [--reconstruct] [--verify <sha>]
 //!             [--break-glass "<reason>"] [--pre-receive]
@@ -59,6 +60,11 @@ pub struct Check {
     pub constitution: bool,
     pub authority: bool,
     pub approve: Option<String>,
+    /// The `reason=` PB §11 makes mandatory on `red=0/n`, on `held=false`, and
+    /// on a closure tripwire. Added to the signature on 2026-08-30: the three
+    /// conditions are reachable on an ordinary approval and there was no way to
+    /// supply one.
+    pub reason: Option<String>,
     pub review: Option<Subject>,
     pub land: Option<Subject>,
     /// Only with `--land`. "`--print` emits a sealed envelope only for a run
@@ -559,6 +565,7 @@ fn parse_check(args: &[&String]) -> Result<Check, ArgError> {
             "--print" => check.print = true,
             "--dry-run" => check.dry_run = true,
             "--approve" => check.approve = Some(next("--approve")?),
+            "--reason" => check.reason = Some(next("--reason")?),
             "--report" => check.report = Some(next("--report")?),
             "--verify" => check.verify = Some(next("--verify")?),
             "--break-glass" => check.break_glass = Some(next("--break-glass")?),
@@ -660,6 +667,14 @@ fn check_combination(check: &Check) -> Result<(), ArgError> {
         return Err(ArgError::UnknownFlag {
             command: "check",
             flag: "--print with --dry-run".into(),
+        });
+    }
+    // PB §11 gives `--reason` to `--approve` and to nothing else on this
+    // command; `--break-glass` carries its own reason as its argument.
+    if check.reason.is_some() && check.approve.is_none() {
+        return Err(ArgError::UnknownFlag {
+            command: "check",
+            flag: "--reason without --approve".into(),
         });
     }
     // PB §11: `--collect`, `--approve` and `--constitution` "execute
@@ -980,6 +995,32 @@ mod tests {
         assert!(matches!(
             check(&["--land", "--approve", "INT-042"]),
             Err(ArgError::UnknownFlag { .. })
+        ));
+    }
+
+    /// PB §11, amended 2026-08-30: `[--approve <id> [--reason "…"]]`. The flag
+    /// belongs to `--approve` and to nothing else on this command —
+    /// `--break-glass` carries its reason as its own argument.
+    #[test]
+    fn reason_belongs_to_approve() {
+        let approved = check(&["--approve", "INT-042", "--reason", "tests were green"]).unwrap();
+        assert_eq!(approved.approve.as_deref(), Some("INT-042"));
+        assert_eq!(approved.reason.as_deref(), Some("tests were green"));
+
+        // Optional: an approval that needs no reason gives none.
+        assert_eq!(check(&["--approve", "INT-042"]).unwrap().reason, None);
+
+        assert!(matches!(
+            check(&["--reason", "why"]),
+            Err(ArgError::UnknownFlag { .. })
+        ));
+        assert!(matches!(
+            check(&["--land", "INT-042", "--reason", "why"]),
+            Err(ArgError::UnknownFlag { .. })
+        ));
+        assert!(matches!(
+            check(&["--reason"]),
+            Err(ArgError::MissingValue(_))
         ));
     }
 
